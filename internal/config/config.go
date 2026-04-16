@@ -14,9 +14,12 @@ import (
 
 // Config is the fully-resolved Mnemos configuration.
 type Config struct {
-	Storage StorageConfig `toml:"storage"`
-	Search  SearchConfig  `toml:"search"`
-	Server  ServerConfig  `toml:"server"`
+	Storage   StorageConfig   `toml:"storage"`
+	Search    SearchConfig    `toml:"search"`
+	Server    ServerConfig    `toml:"server"`
+	Embedding EmbeddingConfig `toml:"embedding"`
+	Vault     VaultConfig     `toml:"vault"`
+	Dream     DreamConfig     `toml:"dream"`
 }
 
 // StorageConfig controls the SQLite database location.
@@ -29,12 +32,37 @@ type SearchConfig struct {
 	DecayRate        float64 `toml:"decay_rate"`
 	DefaultLimit     int     `toml:"default_limit"`
 	MaxContextTokens int     `toml:"max_context_tokens"`
+	HybridAlpha      float64 `toml:"hybrid_alpha"`
 }
 
 // ServerConfig controls transport selection.
 type ServerConfig struct {
 	Transport string `toml:"transport"` // "stdio" or "http"
 	HTTPAddr  string `toml:"http_addr"`
+	APIKey    string `toml:"api_key"`
+}
+
+// EmbeddingConfig selects the embedding provider.
+type EmbeddingConfig struct {
+	Provider  string `toml:"provider"` // "auto" | "ollama" | "openai" | "none"
+	Model     string `toml:"model"`
+	Dimension int    `toml:"dimension"`
+	BaseURL   string `toml:"base_url"`
+	APIKey    string `toml:"api_key"`
+}
+
+// VaultConfig controls Obsidian vault export.
+type VaultConfig struct {
+	Enabled       bool   `toml:"enabled"`
+	Path          string `toml:"path"`
+	WatchInterval string `toml:"watch_interval"` // e.g. "5m"
+}
+
+// DreamConfig controls the consolidation daemon.
+type DreamConfig struct {
+	Interval    string `toml:"interval"`    // e.g. "6h"; empty = off
+	StaleDays   int    `toml:"stale_days"`
+	DecayAmount int    `toml:"decay_amount"`
 }
 
 // Default returns the baked-in defaults — what you get on first run.
@@ -45,17 +73,33 @@ func Default() Config {
 			DecayRate:        0.05,
 			DefaultLimit:     20,
 			MaxContextTokens: 2000,
+			HybridAlpha:      0.5,
 		},
 		Server: ServerConfig{
 			Transport: "stdio",
 			HTTPAddr:  ":8080",
 		},
+		Embedding: EmbeddingConfig{
+			Provider:  "auto",
+			Model:     "nomic-embed-text",
+			Dimension: 768,
+		},
+		Vault: VaultConfig{
+			Enabled:       false,
+			Path:          defaultVaultPath(),
+			WatchInterval: "5m",
+		},
+		Dream: DreamConfig{
+			Interval:    "",
+			StaleDays:   30,
+			DecayAmount: 1,
+		},
 	}
 }
 
 // Load reads config from path, applies defaults for any missing fields,
-// expands ~ in the DB path, and validates. If path does not exist, the
-// default config is written to it and returned.
+// expands ~ in paths, and validates. If path does not exist, the default
+// config is written to it and returned.
 func Load(path string) (Config, error) {
 	cfg := Default()
 
@@ -74,13 +118,9 @@ func Load(path string) (Config, error) {
 		}
 	}
 
-	// Fill in any fields the file may have omitted.
 	applyDefaults(&cfg)
-
-	// Expand ~ in the DB path.
-	if expanded, err := expandHome(cfg.Storage.Path); err == nil {
-		cfg.Storage.Path = expanded
-	}
+	cfg.Storage.Path = expandHome(cfg.Storage.Path)
+	cfg.Vault.Path = expandHome(cfg.Vault.Path)
 
 	if err := validate(cfg); err != nil {
 		return cfg, err
@@ -105,15 +145,23 @@ func defaultDBPath() string {
 	return filepath.Join(home, ".mnemos", "mnemos.db")
 }
 
-func expandHome(p string) (string, error) {
-	if len(p) == 0 || p[0] != '~' {
-		return p, nil
+func defaultVaultPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "mnemos-vault"
+	}
+	return filepath.Join(home, ".mnemos", "vault")
+}
+
+func expandHome(p string) string {
+	if p == "" || p[0] != '~' {
+		return p
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return p, err
+		return p
 	}
-	return filepath.Join(home, p[1:]), nil
+	return filepath.Join(home, p[1:])
 }
 
 func ensureDir(dir string) error {
@@ -146,11 +194,35 @@ func applyDefaults(cfg *Config) {
 	if cfg.Search.MaxContextTokens == 0 {
 		cfg.Search.MaxContextTokens = d.Search.MaxContextTokens
 	}
+	if cfg.Search.HybridAlpha == 0 {
+		cfg.Search.HybridAlpha = d.Search.HybridAlpha
+	}
 	if cfg.Server.Transport == "" {
 		cfg.Server.Transport = d.Server.Transport
 	}
 	if cfg.Server.HTTPAddr == "" {
 		cfg.Server.HTTPAddr = d.Server.HTTPAddr
+	}
+	if cfg.Embedding.Provider == "" {
+		cfg.Embedding.Provider = d.Embedding.Provider
+	}
+	if cfg.Embedding.Model == "" {
+		cfg.Embedding.Model = d.Embedding.Model
+	}
+	if cfg.Embedding.Dimension == 0 {
+		cfg.Embedding.Dimension = d.Embedding.Dimension
+	}
+	if cfg.Vault.Path == "" {
+		cfg.Vault.Path = d.Vault.Path
+	}
+	if cfg.Vault.WatchInterval == "" {
+		cfg.Vault.WatchInterval = d.Vault.WatchInterval
+	}
+	if cfg.Dream.StaleDays == 0 {
+		cfg.Dream.StaleDays = d.Dream.StaleDays
+	}
+	if cfg.Dream.DecayAmount == 0 {
+		cfg.Dream.DecayAmount = d.Dream.DecayAmount
 	}
 }
 
@@ -168,6 +240,14 @@ func validate(cfg Config) error {
 	}
 	if cfg.Search.MaxContextTokens < 100 {
 		return errors.New("config: search.max_context_tokens must be >= 100")
+	}
+	if cfg.Search.HybridAlpha < 0 || cfg.Search.HybridAlpha > 1 {
+		return errors.New("config: search.hybrid_alpha must be in [0, 1]")
+	}
+	switch cfg.Embedding.Provider {
+	case "auto", "ollama", "openai", "none":
+	default:
+		return fmt.Errorf("config: embedding.provider must be auto|ollama|openai|none, got %q", cfg.Embedding.Provider)
 	}
 	return nil
 }

@@ -12,22 +12,35 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
+// Embedder is the minimal interface memory.Service needs from an embedding
+// provider — the full interface lives in internal/embedding. Redeclared
+// here to avoid an import cycle and keep the service boundary clean.
+type Embedder interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
+	Dimension() int
+	Model() string
+}
+
 // Service is the agent-facing API over observations. It owns ID assignment,
 // timestamp defaults, ranking, supersession, and token-budgeted context
 // packing. Transports (MCP, HTTP, CLI) call Service methods, never the Store
 // directly.
 type Service struct {
-	store  Store
-	ranker *Ranker
-	clock  func() time.Time
+	store    Store
+	ranker   *Ranker
+	hybrid   HybridParams
+	embedder Embedder
+	clock    func() time.Time
 }
 
 // Config bundles injected dependencies for the memory service.
 type Config struct {
-	Store       Store
-	RankParams  RankParams
-	Clock       func() time.Time
-	AgentID     string
+	Store      Store
+	RankParams RankParams
+	Hybrid     HybridParams
+	Embedder   Embedder
+	Clock      func() time.Time
+	AgentID    string
 }
 
 // NewService builds a Service from a Store and ranking params.
@@ -39,11 +52,22 @@ func NewService(cfg Config) *Service {
 	if params == (RankParams{}) {
 		params = DefaultRankParams()
 	}
-	return &Service{
-		store:  cfg.Store,
-		ranker: NewRanker(params),
-		clock:  cfg.Clock,
+	hybrid := cfg.Hybrid
+	if hybrid == (HybridParams{}) {
+		hybrid = DefaultHybridParams()
 	}
+	return &Service{
+		store:    cfg.Store,
+		ranker:   NewRanker(params),
+		hybrid:   hybrid,
+		embedder: cfg.Embedder,
+		clock:    cfg.Clock,
+	}
+}
+
+// HybridEnabled reports whether vector search is active.
+func (s *Service) HybridEnabled() bool {
+	return s.embedder != nil && s.embedder.Dimension() > 0
 }
 
 // Save creates a new observation from agent-provided input, or bumps the
@@ -112,7 +136,30 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	if err := s.store.Insert(ctx, o); err != nil {
 		return nil, err
 	}
+
+	// Embed in the background-ish way: if an embedder is configured, try
+	// to generate the vector and attach it. A failure here is non-fatal —
+	// the observation still exists; hybrid search just misses this one
+	// candidate until the next backfill pass.
+	if s.HybridEnabled() {
+		if vec, err := s.embedder.Embed(ctx, embedText(o)); err == nil && len(vec) > 0 {
+			o.Embedding = vec
+			o.EmbeddingModel = s.embedder.Model()
+			_ = s.store.UpdateEmbedding(ctx, o.ID, s.embedder.Model(), vec)
+		}
+	}
+
 	return &SaveResult{Observation: o, Deduped: false}, nil
+}
+
+// embedText assembles the text we embed for an observation. Title + content
+// + rationale produces a richer signal than content alone.
+func embedText(o *Observation) string {
+	parts := []string{o.Title, o.Content}
+	if o.Rationale != "" {
+		parts = append(parts, o.Rationale)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // hashContent produces a stable SHA-256 hex digest over the identity-
@@ -157,8 +204,10 @@ func (s *Service) Invalidate(ctx context.Context, id string) error {
 	return s.store.Invalidate(ctx, id, s.clock().UTC())
 }
 
-// Search runs the ranking layer over raw BM25 hits and returns the top
-// results sorted by composite score.
+// Search runs BM25 retrieval, optionally fuses with vector similarity via
+// Reciprocal Rank Fusion, and applies the recency/importance/access ranker
+// on top. Hybrid mode activates automatically when an embedder is
+// configured and observations have stored vectors.
 func (s *Service) Search(ctx context.Context, in SearchInput) ([]SearchResult, error) {
 	limit := in.Limit
 	if limit <= 0 {
@@ -174,8 +223,11 @@ func (s *Service) Search(ctx context.Context, in SearchInput) ([]SearchResult, e
 	}
 
 	now := s.clock().UTC()
+	if s.HybridEnabled() && in.Query != "" {
+		raw = s.fuseWithVectors(ctx, in.Query, raw)
+	}
 	for i := range raw {
-		raw[i].Score = s.ranker.Score(raw[i].Observation, raw[i].BM25, now)
+		raw[i].Score = s.ranker.Score(raw[i].Observation, raw[i].Score, now)
 	}
 	sort.SliceStable(raw, func(i, j int) bool { return raw[i].Score > raw[j].Score })
 
@@ -183,6 +235,51 @@ func (s *Service) Search(ctx context.Context, in SearchInput) ([]SearchResult, e
 		raw = raw[:limit]
 	}
 	return raw, nil
+}
+
+// fuseWithVectors embeds the query and re-ranks BM25 candidates via RRF,
+// mixing the two ranks according to HybridParams. Candidates missing
+// embeddings get their cosine rank set to infinity (no semantic signal,
+// BM25 alone carries them).
+func (s *Service) fuseWithVectors(ctx context.Context, query string, cands []SearchResult) []SearchResult {
+	qvec, err := s.embedder.Embed(ctx, query)
+	if err != nil || len(qvec) == 0 {
+		// Fail open: BM25-only re-rank keeps search working.
+		return cands
+	}
+
+	// Score each candidate by cosine against the query.
+	type ranked struct {
+		idx       int
+		cosine    float64
+		bm25Rank  int
+		cosRank   int
+	}
+	items := make([]ranked, len(cands))
+	for i := range cands {
+		items[i] = ranked{
+			idx:      i,
+			cosine:   cosine(cands[i].Observation.Embedding, qvec),
+			bm25Rank: i + 1, // BM25 list is already sorted best-first
+		}
+	}
+	// Sort a copy by cosine desc to compute cos ranks; observations without
+	// an embedding land at the bottom with cosRank = 0 (treated as "miss").
+	cosSorted := append([]ranked(nil), items...)
+	sort.SliceStable(cosSorted, func(i, j int) bool { return cosSorted[i].cosine > cosSorted[j].cosine })
+	for rank, item := range cosSorted {
+		if len(cands[item.idx].Observation.Embedding) == 0 {
+			continue
+		}
+		items[item.idx].cosRank = rank + 1
+	}
+
+	// Write RRF score into BM25 field so the downstream Ranker multiplier
+	// treats the fused rank-signal as the "relevance base".
+	for _, it := range items {
+		cands[it.idx].Score = rrfScore(it.bm25Rank, it.cosRank, s.hybrid)
+	}
+	return cands
 }
 
 // Context returns a pre-budgeted block of memory ready for injection into

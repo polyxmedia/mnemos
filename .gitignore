@@ -10,4 +10,4 @@ dist/
 .vscode/
 coverage.html
 coverage.out
-mnemos
+/mnemos
