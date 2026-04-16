@@ -1,0 +1,13 @@
+bin/
+dist/
+*.db
+*.db-wal
+*.db-shm
+*.test
+*.out
+.DS_Store
+.idea/
+.vscode/
+coverage.html
+coverage.out
+mnemos
