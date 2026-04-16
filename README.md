@@ -8,6 +8,7 @@
 <p align="center">
   <a href="https://github.com/polyxmedia/mnemos/releases"><img src="https://img.shields.io/github/v/release/polyxmedia/mnemos?sort=semver" alt="release"/></a>
   <a href="https://github.com/polyxmedia/mnemos/actions/workflows/ci.yml"><img src="https://github.com/polyxmedia/mnemos/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="https://codecov.io/gh/polyxmedia/mnemos"><img src="https://codecov.io/gh/polyxmedia/mnemos/branch/main/graph/badge.svg" alt="coverage"/></a>
   <a href="https://pkg.go.dev/github.com/polyxmedia/mnemos"><img src="https://pkg.go.dev/badge/github.com/polyxmedia/mnemos.svg" alt="go reference"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"/></a>
 </p>

@@ -30,7 +30,13 @@ jobs:
       # -race needs cgo. Release binaries are still built with
       # CGO_ENABLED=0; this only affects the test run.
       - name: Test
-        run: go test ./... -race -count=1
+        run: go test ./... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.26'
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
 
   lint:
     runs-on: ubuntu-latest

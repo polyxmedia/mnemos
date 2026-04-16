@@ -159,7 +159,12 @@ func (s *obsStore) Search(ctx context.Context, in memory.SearchInput) ([]memory.
 		args = append(args, in.MinImportance)
 	}
 	if !in.IncludeStale {
-		sb.WriteString(` AND o.invalidated_at IS NULL`)
+		// Bi-temporal: invalidated_at is system time (when WE recorded the
+		// invalidation); valid_until is fact time. For a historical AsOf
+		// query we want everything that was true at AsOf, even if it was
+		// invalidated in our system afterwards.
+		sb.WriteString(` AND (o.invalidated_at IS NULL OR o.invalidated_at > ?)`)
+		args = append(args, asOf.UTC())
 		sb.WriteString(` AND (o.valid_until IS NULL OR o.valid_until > ?)`)
 		args = append(args, asOf.UTC())
 		sb.WriteString(` AND (o.expires_at  IS NULL OR o.expires_at  > ?)`)
