@@ -66,3 +66,74 @@ func (s *Service) RecordUse(ctx context.Context, in FeedbackInput) error {
 	}
 	return s.store.RecordUse(ctx, in)
 }
+
+// ExportPack builds a shareable pack from an agent's skills. If names is
+// empty, every skill for the agent is included. Passing specific names
+// lets users publish a focused subset (e.g. "just the go error-handling
+// skills"). Returns ErrNotFound if any requested name is missing.
+func (s *Service) ExportPack(ctx context.Context, agentID string, names []string, source PackSource) (*Pack, error) {
+	all, err := s.store.List(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("list: %w", err)
+	}
+	if len(names) == 0 {
+		if len(all) == 0 {
+			return nil, fmt.Errorf("export: no skills to pack")
+		}
+		return BuildPack(source, all), nil
+	}
+	byName := make(map[string]Skill, len(all))
+	for _, s := range all {
+		byName[s.Name] = s
+	}
+	selected := make([]Skill, 0, len(names))
+	for _, n := range names {
+		sk, ok := byName[n]
+		if !ok {
+			return nil, fmt.Errorf("export: skill %q not found", n)
+		}
+		selected = append(selected, sk)
+	}
+	return BuildPack(source, selected), nil
+}
+
+// ImportResult summarises what ImportPack did. Counts distinguish skills
+// that were created brand-new from ones that updated an existing skill
+// under the same name (producing a version bump).
+type ImportResult struct {
+	Created int
+	Updated int
+	Source  PackSource
+}
+
+// ImportPack persists every skill in the pack for the given agent.
+// Existing skills with the same name are version-bumped via Upsert; new
+// ones are created. Returns a summary of what changed.
+func (s *Service) ImportPack(ctx context.Context, agentID string, pack *Pack) (ImportResult, error) {
+	result := ImportResult{Source: pack.Source}
+	existing, err := s.store.List(ctx, agentID)
+	if err != nil {
+		return result, fmt.Errorf("list existing: %w", err)
+	}
+	existingNames := make(map[string]bool, len(existing))
+	for _, sk := range existing {
+		existingNames[sk.Name] = true
+	}
+	for _, ps := range pack.Skills {
+		_, err := s.store.Upsert(ctx, SaveInput{
+			AgentID: agentID, Name: ps.Name,
+			Description: ps.Description,
+			Procedure:   ps.Procedure, Pitfalls: ps.Pitfalls,
+			Tags: ps.Tags,
+		})
+		if err != nil {
+			return result, fmt.Errorf("import %q: %w", ps.Name, err)
+		}
+		if existingNames[ps.Name] {
+			result.Updated++
+		} else {
+			result.Created++
+		}
+	}
+	return result, nil
+}

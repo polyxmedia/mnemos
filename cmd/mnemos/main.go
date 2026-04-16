@@ -50,6 +50,7 @@ var commands = map[string]handler{
 	"dream":     runDream,
 	"vault":     runVault,
 	"embed":     runEmbed,
+	"skill":     runSkill,
 	"version":   runVersion,
 	"config":    runConfig,
 	"init":      runInit,
@@ -91,6 +92,9 @@ Commands:
   vault status           Show vault sync status
   embed status           Show embedding provider status
   embed backfill         Generate embeddings for observations that lack them
+  skill list             Show installed skills
+  skill export [names]   Build a shareable pack (stdout or --out file)
+  skill import <src>     Import a pack from a file path or https URL
   init                   Register mnemos with Claude Code / Cursor / Windsurf
   doctor                 Check installation health
   config                 Print the current configuration
