@@ -197,9 +197,9 @@ type ContextInput struct {
 // ContextBlock is a prepared context string ready for injection, with the
 // observations it was built from for provenance.
 type ContextBlock struct {
-	Text         string
+	Text          string
 	TokenEstimate int
-	Observations []Observation
+	Observations  []Observation
 }
 
 // Stats is the aggregate view returned by mnemos_stats.

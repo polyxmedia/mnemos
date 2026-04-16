@@ -27,7 +27,7 @@ import (
 // memory as an observation of type 'dream' so the agent can query past
 // dreams via regular search.
 type Journal struct {
-	StartedAt time.Time
+	StartedAt  time.Time
 	FinishedAt time.Time
 	Pruned     int64
 	Decayed    int64

@@ -40,10 +40,10 @@ func TestNullableTimePtrFromValid(t *testing.T) {
 
 func TestJSONQuoteEscapesSpecials(t *testing.T) {
 	cases := map[string]string{
-		`plain`:       `"plain"`,
-		`with"quote`:  `"with\"quote"`,
-		`back\slash`:  `"back\\slash"`,
-		``:            `""`,
+		`plain`:      `"plain"`,
+		`with"quote`: `"with\"quote"`,
+		`back\slash`: `"back\\slash"`,
+		``:           `""`,
 	}
 	for in, want := range cases {
 		if got := jsonQuote(in); got != want {

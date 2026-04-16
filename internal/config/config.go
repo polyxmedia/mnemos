@@ -60,7 +60,7 @@ type VaultConfig struct {
 
 // DreamConfig controls the consolidation daemon.
 type DreamConfig struct {
-	Interval    string `toml:"interval"`    // e.g. "6h"; empty = off
+	Interval    string `toml:"interval"` // e.g. "6h"; empty = off
 	StaleDays   int    `toml:"stale_days"`
 	DecayAmount int    `toml:"decay_amount"`
 }

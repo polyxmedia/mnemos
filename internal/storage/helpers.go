@@ -65,10 +65,10 @@ func ftsEscape(q string) string {
 		out = append(out, `"`+strings.ReplaceAll(tok, `"`, `""`)+`"`+`*`)
 	}
 	for _, r := range q {
-		switch {
-		case r == ' ' || r == '\t' || r == '\n':
+		switch r {
+		case ' ', '\t', '\n':
 			flush()
-		case r == '"' || r == '(' || r == ')' || r == ':' || r == '*':
+		case '"', '(', ')', ':', '*':
 			// drop operator-ish characters from user input
 		default:
 			cur.WriteRune(r)

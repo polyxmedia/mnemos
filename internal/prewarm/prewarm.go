@@ -338,7 +338,7 @@ func stepHotFiles(ctx context.Context, s *Service, req Request) (sectionDraft, e
 	}
 	var b strings.Builder
 	for _, h := range hot {
-		b.WriteString(fmt.Sprintf("- %s (%d touches)\n", h.Path, h.TouchCount))
+		fmt.Fprintf(&b, "- %s (%d touches)\n", h.Path, h.TouchCount)
 	}
 	return sectionDraft{title: "hot files", body: strings.TrimRight(b.String(), "\n")}, nil
 }

@@ -22,8 +22,8 @@ type Target struct {
 
 // ServerEntry is the value we write under mcpServers[Key].
 type ServerEntry struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 }
 

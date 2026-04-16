@@ -20,8 +20,8 @@ import (
 // Server is the Mnemos MCP server. It is a thin wrapper around the SDK
 // server, holding the service dependencies our tool handlers close over.
 type Server struct {
-	sdk   *mcpsdk.Server
-	cfg   Config
+	sdk *mcpsdk.Server
+	cfg Config
 }
 
 // Config bundles the dependencies a Server needs. Every field except

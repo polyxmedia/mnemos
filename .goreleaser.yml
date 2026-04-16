@@ -79,14 +79,14 @@ release:
   prerelease: auto
   draft: false
 
-# Homebrew tap publishing. Skipped by default so the first release
-# doesn't fail on a missing tap repo or missing HOMEBREW_TAP_GITHUB_TOKEN.
-# To enable: create polyxmedia/homebrew-tap, add a Personal Access Token
-# as HOMEBREW_TAP_GITHUB_TOKEN to this repo's Actions secrets, then set
-# the "skip_upload: false" line below (or remove this block's skip_upload).
+# Homebrew tap publishing. Gated on HOMEBREW_TAP_GITHUB_TOKEN so this
+# block is a no-op unless (a) polyxmedia/homebrew-tap exists and
+# (b) a PAT with write access is set as the HOMEBREW_TAP_GITHUB_TOKEN
+# secret in this repo's Actions settings. Without both, the release
+# still produces binaries + checksums; just no formula push.
 brews:
   - name: mnemos
-    skip_upload: auto # publishes only when HOMEBREW_TAP_GITHUB_TOKEN is set
+    disable: '{{ if eq (index .Env "HOMEBREW_TAP_GITHUB_TOKEN") "" }}true{{ end }}'
     repository:
       owner: polyxmedia
       name: homebrew-tap

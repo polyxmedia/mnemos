@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/storage"
@@ -66,6 +67,12 @@ func TestRecentOrderedDescending(t *testing.T) {
 			t.Fatal(err)
 		}
 		ids = append(ids, s.ID)
+		// Windows' low-resolution clock (15 ms on some systems) can give
+		// identical timestamps across rapid inserts, which breaks
+		// started_at DESC ordering. Session IDs are ULIDs which sort
+		// correctly even at the same ms — so we sleep just enough to
+		// guarantee distinct started_at values too.
+		time.Sleep(time.Millisecond * 20)
 	}
 	got, err := svc.Recent(ctx, "default", 10)
 	if err != nil {
@@ -75,6 +82,6 @@ func TestRecentOrderedDescending(t *testing.T) {
 		t.Fatalf("want 3 sessions, got %d", len(got))
 	}
 	if got[0].ID != ids[2] {
-		t.Errorf("expected most recent first")
+		t.Errorf("expected most recent first, got %s (ids: %v)", got[0].ID, ids)
 	}
 }

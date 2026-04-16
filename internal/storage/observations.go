@@ -393,20 +393,20 @@ type obsScanDest struct {
 
 func newObsScanDest(o *memory.Observation) obsScanDest {
 	return obsScanDest{
-		o:               o,
-		sessID:          &sql.NullString{},
-		project:         &sql.NullString{},
-		contentHash:     &sql.NullString{},
-		structured:      &sql.NullString{},
-		rationale:       &sql.NullString{},
-		embeddingModel:  &sql.NullString{},
-		lastAcc:         &sql.NullTime{},
-		validUntil:      &sql.NullTime{},
-		invalidatedAt:   &sql.NullTime{},
-		expiresAt:       &sql.NullTime{},
-		lastExportedAt:  &sql.NullTime{},
-		tagsJSON:        new(string),
-		embedding:       new([]byte),
+		o:              o,
+		sessID:         &sql.NullString{},
+		project:        &sql.NullString{},
+		contentHash:    &sql.NullString{},
+		structured:     &sql.NullString{},
+		rationale:      &sql.NullString{},
+		embeddingModel: &sql.NullString{},
+		lastAcc:        &sql.NullTime{},
+		validUntil:     &sql.NullTime{},
+		invalidatedAt:  &sql.NullTime{},
+		expiresAt:      &sql.NullTime{},
+		lastExportedAt: &sql.NullTime{},
+		tagsJSON:       new(string),
+		embedding:      new([]byte),
 	}
 }
 

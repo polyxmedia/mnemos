@@ -136,7 +136,7 @@ func TestInvalidTimeInSaveRejected(t *testing.T) {
 	res, err := h.client.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name: "mnemos_save",
 		Arguments: map[string]any{
-			"title":      "t", "content": "c", "type": "pattern",
+			"title": "t", "content": "c", "type": "pattern",
 			"valid_from": "not-a-date",
 		},
 	})

@@ -85,7 +85,7 @@ func TestBuildRespectsDefaultMaxTokens(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 30; i++ {
 		_, _ = mem.Save(ctx, memory.SaveInput{
-			Title: "long convention",
+			Title:   "long convention",
 			Content: strings.Repeat("lots of text about stuff and things ", 50),
 			Type:    memory.TypeConvention,
 			Project: "x",

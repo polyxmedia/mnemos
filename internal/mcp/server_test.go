@@ -21,9 +21,9 @@ import (
 // harness builds a server+client pair connected via in-memory transports.
 // Use the returned *mcpsdk.ClientSession for all tool/resource calls.
 type harness struct {
-	t       *testing.T
-	client  *mcpsdk.ClientSession
-	server  *mcpsdk.ServerSession
+	t      *testing.T
+	client *mcpsdk.ClientSession
+	server *mcpsdk.ServerSession
 }
 
 func (h *harness) close() {
@@ -110,10 +110,10 @@ func TestToolsListReturnsAllFourteen(t *testing.T) {
 		"mnemos_save": true, "mnemos_search": true, "mnemos_get": true,
 		"mnemos_delete": true, "mnemos_link": true,
 		"mnemos_session_start": true, "mnemos_session_end": true,
-		"mnemos_context":    true,
-		"mnemos_correct":    true, "mnemos_convention": true, "mnemos_touch": true,
+		"mnemos_context": true,
+		"mnemos_correct": true, "mnemos_convention": true, "mnemos_touch": true,
 		"mnemos_skill_match": true, "mnemos_skill_save": true,
-		"mnemos_stats":       true,
+		"mnemos_stats": true,
 	}
 	for _, tool := range res.Tools {
 		delete(expected, tool.Name)

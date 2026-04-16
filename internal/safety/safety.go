@@ -123,47 +123,47 @@ func defaultRules() []rule {
 		{
 			name: "instruction-override",
 			risk: RiskHigh,
-			re: regexp.MustCompile(`(?i)(ignore\s+(all\s+)?previous|disregard\s+the\s+above|forget\s+(everything|all))`),
+			re:   regexp.MustCompile(`(?i)(ignore\s+(all\s+)?previous|disregard\s+the\s+above|forget\s+(everything|all))`),
 		},
 		{
 			name: "system-role-spoof",
 			risk: RiskHigh,
-			re: regexp.MustCompile(`(?i)(system\s*:|you\s+are\s+now|from\s+now\s+on\s+you\s+are)`),
+			re:   regexp.MustCompile(`(?i)(system\s*:|you\s+are\s+now|from\s+now\s+on\s+you\s+are)`),
 		},
 		{
 			name: "fake-tool-call",
 			risk: RiskMedium,
-			re: regexp.MustCompile(`<\s*(tool_use|tool_call|function_calls?)\b`),
+			re:   regexp.MustCompile(`<\s*(tool_use|tool_call|function_calls?)\b`),
 		},
 		{
 			name: "mcp-spoof",
 			risk: RiskHigh,
-			re: regexp.MustCompile(`(?i)\bmnemos_\w+\s*\(|call\s+(the\s+)?mnemos_`),
+			re:   regexp.MustCompile(`(?i)\bmnemos_\w+\s*\(|call\s+(the\s+)?mnemos_`),
 		},
 		{
 			name: "credential-bait",
 			risk: RiskMedium,
-			re: regexp.MustCompile(`(?i)(api[\s_-]?key|bearer\s+token|aws[\s_-]?secret|password\s*[:=])`),
+			re:   regexp.MustCompile(`(?i)(api[\s_-]?key|bearer\s+token|aws[\s_-]?secret|password\s*[:=])`),
 		},
 		{
 			name: "exfil-link",
 			risk: RiskMedium,
-			re: regexp.MustCompile(`\[[^\]]{0,80}\]\(https?://[^)]{0,400}\?.*=`),
+			re:   regexp.MustCompile(`\[[^\]]{0,80}\]\(https?://[^)]{0,400}\?.*=`),
 		},
 		{
 			name: "zero-width-unicode",
 			risk: RiskHigh,
-			re: regexp.MustCompile("[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2066-\u2069\u00AD\uFEFF]"),
+			re:   regexp.MustCompile("[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2066-\u2069\u00AD\uFEFF]"),
 		},
 		{
 			name: "tag-chars",
 			risk: RiskHigh,
-			re: regexp.MustCompile("[\U000E0000-\U000E007F]"),
+			re:   regexp.MustCompile("[\U000E0000-\U000E007F]"),
 		},
 		{
 			name: "base64-blob",
 			risk: RiskLow,
-			re: regexp.MustCompile(`\b(?:[A-Za-z0-9+/]{120,}={0,2})\b`),
+			re:   regexp.MustCompile(`\b(?:[A-Za-z0-9+/]{120,}={0,2})\b`),
 		},
 	}
 }

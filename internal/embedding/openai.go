@@ -21,10 +21,10 @@ type OpenAI struct {
 
 // OpenAIConfig bundles OpenAI-compatible provider settings.
 type OpenAIConfig struct {
-	BaseURL   string        // e.g. "https://api.openai.com/v1"
-	APIKey    string        // Authorization: Bearer <key>
-	Model     string        // e.g. "text-embedding-3-small"
-	Dimension int           // e.g. 1536
+	BaseURL   string // e.g. "https://api.openai.com/v1"
+	APIKey    string // Authorization: Bearer <key>
+	Model     string // e.g. "text-embedding-3-small"
+	Dimension int    // e.g. 1536
 	Timeout   time.Duration
 }
 

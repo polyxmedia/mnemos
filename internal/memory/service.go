@@ -250,10 +250,10 @@ func (s *Service) fuseWithVectors(ctx context.Context, query string, cands []Sea
 
 	// Score each candidate by cosine against the query.
 	type ranked struct {
-		idx       int
-		cosine    float64
-		bm25Rank  int
-		cosRank   int
+		idx      int
+		cosine   float64
+		bm25Rank int
+		cosRank  int
 	}
 	items := make([]ranked, len(cands))
 	for i := range cands {
