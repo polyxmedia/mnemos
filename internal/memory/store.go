@@ -9,69 +9,61 @@ import (
 // ErrNotFound is returned when an observation lookup misses.
 var ErrNotFound = errors.New("observation not found")
 
-// Store is the persistence boundary for observations. Implementations live in
-// internal/storage; services depend on this interface only.
-type Store interface {
-	// Insert writes a new observation. The caller has already populated ID,
-	// timestamps, and defaults.
-	Insert(ctx context.Context, o *Observation) error
+// The store surface is segregated so consumers depend only on the subset
+// they actually use. The concrete SQLite implementation satisfies all
+// interfaces simultaneously; callers accept the narrowest one they need.
+//
+// The idiom intentionally follows the Go stdlib io package: many small
+// interfaces that compose into wider ones (Store is the io.ReadWriter
+// analogue). Tests can mock a Reader alone without stubbing write paths
+// that don't matter to the subject under test.
 
-	// Get returns an observation by ID and bumps its access counter.
+// Reader is the read-only observation surface.
+type Reader interface {
 	Get(ctx context.Context, id string) (*Observation, error)
-
-	// Delete removes an observation outright (hard delete). Prefer Invalidate
-	// for anything that was ever true.
-	Delete(ctx context.Context, id string) error
-
-	// Invalidate marks an observation as no longer true as of validUntil.
-	// InvalidatedAt is set to now. The record is not removed.
-	Invalidate(ctx context.Context, id string, validUntil time.Time) error
-
-	// Search executes a BM25 FTS5 query with filters and returns raw hits
-	// plus the base BM25 score. Ranking is layered on top in the service.
 	Search(ctx context.Context, in SearchInput) ([]SearchResult, error)
-
-	// Link records an edge between two observations. If link_type is
-	// 'supersedes', the caller should also Invalidate the target.
-	Link(ctx context.Context, sourceID, targetID string, linkType LinkType) error
-
-	// Prune removes observations past their expires_at (hard delete). Returns
-	// the number of rows removed.
-	Prune(ctx context.Context, now time.Time) (int64, error)
-
-	// Stats returns aggregate counts and top-tag summary.
-	Stats(ctx context.Context) (Stats, error)
-
-	// ListByTitleSimilarity finds observations with titles similar to the
-	// given text (used by consolidation to detect near-duplicates).
-	ListByTitleSimilarity(ctx context.Context, agentID, title string, limit int) ([]Observation, error)
-
-	// DecayImportance reduces importance of observations untouched for more
-	// than staleDays by the given amount (floor 1). Returns rows affected.
-	DecayImportance(ctx context.Context, staleDays int, amount int) (int64, error)
-
-	// FindByContentHash looks up an existing observation with identical
-	// content in the same (agent, project) scope. Drives dedup-on-save.
-	// Returns nil, nil when no duplicate exists.
-	FindByContentHash(ctx context.Context, agentID, project, hash string) (*Observation, error)
-
-	// BumpAccess increments access_count and sets last_accessed_at without
-	// returning the row. Used by dedup to register a re-save as a hit.
-	BumpAccess(ctx context.Context, id string) error
-
-	// ListByProject returns live observations in a project, optionally
-	// filtered by type, ordered by recency. Used by pre-warm.
 	ListByProject(ctx context.Context, agentID, project string, obsType ObsType, limit int) ([]Observation, error)
+	ListByTitleSimilarity(ctx context.Context, agentID, title string, limit int) ([]Observation, error)
+	FindByContentHash(ctx context.Context, agentID, project, hash string) (*Observation, error)
+	Stats(ctx context.Context) (Stats, error)
+}
 
-	// UpdateEmbedding writes an embedding + model ID for an observation.
-	UpdateEmbedding(ctx context.Context, id string, model string, vec []float32) error
+// Writer is the mutating observation surface, excluding housekeeping.
+type Writer interface {
+	Insert(ctx context.Context, o *Observation) error
+	Delete(ctx context.Context, id string) error
+	Invalidate(ctx context.Context, id string, validUntil time.Time) error
+	Link(ctx context.Context, sourceID, targetID string, linkType LinkType) error
+	BumpAccess(ctx context.Context, id string) error
+}
 
-	// ListMissingEmbeddings returns observations with no embedding yet
-	// (for backfill).
-	ListMissingEmbeddings(ctx context.Context, limit int) ([]Observation, error)
+// Maintenance is the housekeeping surface — time-based operations that
+// run offline (consolidation, pruning).
+type Maintenance interface {
+	Prune(ctx context.Context, now time.Time) (int64, error)
+	DecayImportance(ctx context.Context, staleDays int, amount int) (int64, error)
+}
 
-	// MarkExported updates last_exported_at for vault sync tracking.
+// Exportable tracks external-system sync state (currently: Obsidian vault).
+type Exportable interface {
 	MarkExported(ctx context.Context, id string, at time.Time) error
+}
+
+// Vectorable is the embedding-specific surface used by the backfill path.
+type Vectorable interface {
+	UpdateEmbedding(ctx context.Context, id, model string, vec []float32) error
+	ListMissingEmbeddings(ctx context.Context, limit int) ([]Observation, error)
+}
+
+// Store is the union satisfied by the SQLite implementation. Most
+// consumers should depend on one of the narrower interfaces; Service
+// takes the full union because it genuinely needs all five surfaces.
+type Store interface {
+	Reader
+	Writer
+	Maintenance
+	Exportable
+	Vectorable
 }
 
 // TouchStore persists file-touch events (file heat map).

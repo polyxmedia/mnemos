@@ -110,7 +110,7 @@ func runServe(ctx context.Context, args []string) error {
 	})
 
 	logger.Info("mnemos serve (stdio)", "version", version.Version, "db", cfg.Storage.Path)
-	if err := srv.Serve(ctx, os.Stdin, os.Stdout); err != nil {
+	if err := srv.ServeStdio(ctx); err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
 	return nil

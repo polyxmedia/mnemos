@@ -17,6 +17,7 @@ import (
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
+	"gopkg.in/yaml.v3"
 )
 
 // Exporter writes a vault directory structure:
@@ -27,18 +28,26 @@ import (
 //	  skills/{slug}.md
 //	  tags/{tag}.md           # MOC (Map of Content)
 //	  _index.md               # dashboard
+//
+// obsRW is the Reader + Exportable union — vault reads observations and
+// stamps last_exported_at, nothing more.
+type obsRW interface {
+	memory.Reader
+	memory.Exportable
+}
+
 type Exporter struct {
-	root    string
-	obs     memory.Store
-	sess    session.Store
-	skill   skills.Store
-	log     *slog.Logger
+	root  string
+	obs   obsRW
+	sess  session.Store
+	skill skills.Store
+	log   *slog.Logger
 }
 
 // Config bundles dependencies.
 type Config struct {
 	Root     string
-	Obs      memory.Store
+	Obs      obsRW
 	Sessions session.Store
 	Skills   skills.Store
 	Logger   *slog.Logger
@@ -308,15 +317,13 @@ func slug(s string) string {
 	return out
 }
 
+// writeFrontmatter emits a YAML front-matter block using gopkg.in/yaml.v3
+// so edge cases (quoting, unicode, nested values, multi-line strings) are
+// handled correctly. Empty/nil values are dropped to keep frontmatter tight.
 func writeFrontmatter(b *strings.Builder, m map[string]any) {
-	b.WriteString("---\n")
+	cleaned := make(map[string]any, len(m))
 	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := m[k]
+	for k, v := range m {
 		if v == nil {
 			continue
 		}
@@ -325,36 +332,31 @@ func writeFrontmatter(b *strings.Builder, m map[string]any) {
 			if val == "" {
 				continue
 			}
-			fmt.Fprintf(b, "%s: %s\n", k, yamlEscape(val))
+			cleaned[k] = val
 		case []string:
 			if len(val) == 0 {
 				continue
 			}
-			fmt.Fprintf(b, "%s: [%s]\n", k, strings.Join(quoteAll(val), ", "))
-		case int, int64, float64:
-			fmt.Fprintf(b, "%s: %v\n", k, val)
-		case bool:
-			fmt.Fprintf(b, "%s: %v\n", k, val)
+			cleaned[k] = val
 		default:
-			fmt.Fprintf(b, "%s: %v\n", k, val)
+			cleaned[k] = v
 		}
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+
+	// yaml.Marshal preserves key order by re-sorting alphabetically on
+	// maps; that matches what we want and keeps diffs stable.
+	out, err := yaml.Marshal(cleaned)
+	if err != nil {
+		// Shouldn't happen for flat string/int/slice values, but fall back
+		// gracefully rather than panic.
+		b.WriteString("---\n# marshalling frontmatter failed\n---\n\n")
+		return
+	}
+	b.WriteString("---\n")
+	b.Write(out)
 	b.WriteString("---\n\n")
-}
-
-func quoteAll(items []string) []string {
-	out := make([]string, len(items))
-	for i, s := range items {
-		out[i] = yamlEscape(s)
-	}
-	return out
-}
-
-func yamlEscape(s string) string {
-	if strings.ContainsAny(s, ":#\n\"'[]{}") {
-		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
-	}
-	return s
 }
 
 func ensureDir(path string) error {

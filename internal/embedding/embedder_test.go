@@ -19,6 +19,9 @@ func TestNoopEmbedder(t *testing.T) {
 	if e.Dimension() != 0 {
 		t.Errorf("Noop dimension should be 0")
 	}
+	if e.Model() != "none" {
+		t.Errorf("Noop model should be 'none', got %q", e.Model())
+	}
 }
 
 func TestOllamaEmbed(t *testing.T) {

@@ -6,90 +6,87 @@ import (
 	"errors"
 	"fmt"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
 
-func (s *Server) resourceList() []Resource {
-	return []Resource{
-		{
-			URI:         "mnemos://session/current",
-			Name:        "Current session",
-			Description: "The most recently opened session with its goal and recent observations",
-			MIMEType:    "application/json",
-		},
-		{
-			URI:         "mnemos://skills/index",
-			Name:        "Skills index",
-			Description: "All skills (name + description + effectiveness) for the default agent",
-			MIMEType:    "application/json",
-		},
-		{
-			URI:         "mnemos://stats",
-			Name:        "Stats",
-			Description: "Memory system statistics",
-			MIMEType:    "application/json",
-		},
-	}
+// registerResources attaches the three Mnemos MCP resources:
+//
+//	mnemos://session/current  — most recent open session
+//	mnemos://skills/index     — slim skill index
+//	mnemos://stats            — system statistics
+func (s *Server) registerResources() {
+	s.sdk.AddResource(&mcpsdk.Resource{
+		URI:         "mnemos://session/current",
+		Name:        "Current session",
+		Description: "Most recent open session with goal and project",
+		MIMEType:    "application/json",
+	}, s.readCurrentSession)
+
+	s.sdk.AddResource(&mcpsdk.Resource{
+		URI:         "mnemos://skills/index",
+		Name:        "Skills index",
+		Description: "All skills (name + description + effectiveness)",
+		MIMEType:    "application/json",
+	}, s.readSkillsIndex)
+
+	s.sdk.AddResource(&mcpsdk.Resource{
+		URI:         "mnemos://stats",
+		Name:        "Stats",
+		Description: "Memory system statistics",
+		MIMEType:    "application/json",
+	}, s.readStats)
 }
 
-func (s *Server) handleResourceRead(ctx context.Context, req rpcRequest) *rpcResponse {
-	var params resourcesReadParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return errorResponse(req.ID, errInvalidParams, "invalid resource read params", err.Error())
-	}
-	text, mime, err := s.readResource(ctx, params.URI)
+func (s *Server) readCurrentSession(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+	sess, err := s.cfg.Sessions.Current(ctx, "")
 	if err != nil {
-		return errorResponse(req.ID, errInternal, err.Error(), nil)
+		if errors.Is(err, session.ErrNotFound) {
+			return resourceJSON(req.Params.URI, map[string]any{"session": nil})
+		}
+		return nil, fmt.Errorf("current session: %w", err)
 	}
-	return successResponse(req.ID, resourcesReadResult{
-		Contents: []resourceContent{{URI: params.URI, MIMEType: mime, Text: text}},
-	})
+	return resourceJSON(req.Params.URI, sess)
 }
 
-func (s *Server) readResource(ctx context.Context, uri string) (string, string, error) {
-	switch uri {
-	case "mnemos://session/current":
-		sess, err := s.sess.Current(ctx, "")
-		if err != nil {
-			if errors.Is(err, session.ErrNotFound) {
-				return `{"session":null}`, "application/json", nil
-			}
-			return "", "", fmt.Errorf("current session: %w", err)
-		}
-		return marshal(sess)
-	case "mnemos://skills/index":
-		list, err := s.skill.List(ctx, "")
-		if err != nil {
-			return "", "", err
-		}
-		slim := make([]map[string]any, 0, len(list))
-		for _, sk := range list {
-			slim = append(slim, map[string]any{
-				"id":            sk.ID,
-				"name":          sk.Name,
-				"description":   sk.Description,
-				"tags":          sk.Tags,
-				"use_count":     sk.UseCount,
-				"effectiveness": sk.Effectiveness,
-				"version":       sk.Version,
-			})
-		}
-		return marshal(map[string]any{"skills": slim})
-	case "mnemos://stats":
-		st, err := s.mem.Stats(ctx)
-		if err != nil {
-			return "", "", err
-		}
-		return marshal(st)
-	default:
-		return "", "", fmt.Errorf("unknown resource: %s", uri)
+func (s *Server) readSkillsIndex(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+	list, err := s.cfg.Skills.List(ctx, "")
+	if err != nil {
+		return nil, err
 	}
+	slim := make([]map[string]any, 0, len(list))
+	for _, sk := range list {
+		slim = append(slim, map[string]any{
+			"id":            sk.ID,
+			"name":          sk.Name,
+			"description":   sk.Description,
+			"tags":          sk.Tags,
+			"use_count":     sk.UseCount,
+			"effectiveness": sk.Effectiveness,
+			"version":       sk.Version,
+		})
+	}
+	return resourceJSON(req.Params.URI, map[string]any{"skills": slim})
 }
 
-func marshal(v any) (string, string, error) {
+func (s *Server) readStats(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+	st, err := s.cfg.Memory.Stats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return resourceJSON(req.Params.URI, st)
+}
+
+func resourceJSON(uri string, v any) (*mcpsdk.ReadResourceResult, error) {
 	buf, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return "", "", fmt.Errorf("marshal: %w", err)
+		return nil, fmt.Errorf("marshal resource: %w", err)
 	}
-	return string(buf), "application/json", nil
+	return &mcpsdk.ReadResourceResult{
+		Contents: []*mcpsdk.ResourceContents{{
+			URI:      uri,
+			MIMEType: "application/json",
+			Text:     string(buf),
+		}},
+	}, nil
 }

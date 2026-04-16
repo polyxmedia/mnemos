@@ -17,36 +17,49 @@ import (
 	"github.com/polyxmedia/mnemos/internal/storage"
 )
 
-func loadServices(ctx context.Context) (*storage.DB, *memory.Service, *session.Service, *skills.Service, config.Config, error) {
+// deps bundles the services a CLI subcommand typically needs. Returned by
+// loadDeps so callers take exactly what they use.
+type deps struct {
+	db   *storage.DB
+	mem  *memory.Service
+	sess *session.Service
+	skl  *skills.Service
+	cfg  config.Config
+}
+
+func (d *deps) close() { _ = d.db.Close() }
+
+func loadDeps(ctx context.Context) (*deps, error) {
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
-		return nil, nil, nil, nil, cfg, fmt.Errorf("load config: %w", err)
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 	db, err := storage.Open(ctx, cfg.Storage.Path)
 	if err != nil {
-		return nil, nil, nil, nil, cfg, fmt.Errorf("open storage: %w", err)
+		return nil, fmt.Errorf("open storage: %w", err)
 	}
-	mem := memory.NewService(memory.Config{Store: db.Observations()})
-	sess := session.NewService(session.Config{Store: db.Sessions()})
-	skl := skills.NewService(skills.Config{Store: db.Skills()})
-	return db, mem, sess, skl, cfg, nil
+	return &deps{
+		db:   db,
+		mem:  memory.NewService(memory.Config{Store: db.Observations()}),
+		sess: session.NewService(session.Config{Store: db.Sessions()}),
+		skl:  skills.NewService(skills.Config{Store: db.Skills()}),
+		cfg:  cfg,
+	}, nil
 }
 
 func runSearch(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: mnemos search <query>")
 	}
-	query := args[0]
-
-	db, mem, _, _, _, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	results, err := mem.Search(ctx, memory.SearchInput{Query: query, Limit: 20})
+	results, err := d.mem.Search(ctx, memory.SearchInput{Query: args[0], Limit: 20})
 	if err != nil {
-		return err
+		return fmt.Errorf("search: %w", err)
 	}
 	if len(results) == 0 {
 		fmt.Println("no matches")
@@ -60,23 +73,23 @@ func runSearch(ctx context.Context, args []string) error {
 }
 
 func runStats(ctx context.Context, _ []string) error {
-	db, mem, _, skl, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	st, err := mem.Stats(ctx)
+	st, err := d.mem.Stats(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("stats: %w", err)
 	}
-	skillCount, _ := skl.List(ctx, "")
-	fi, _ := os.Stat(cfg.Storage.Path)
-	size := int64(0)
+	skillCount, _ := d.skl.List(ctx, "")
+	fi, _ := os.Stat(d.cfg.Storage.Path)
+	var size int64
 	if fi != nil {
 		size = fi.Size()
 	}
-	fmt.Printf("database:          %s (%d bytes)\n", cfg.Storage.Path, size)
+	fmt.Printf("database:          %s (%d bytes)\n", d.cfg.Storage.Path, size)
 	fmt.Printf("observations:      %d (%d live)\n", st.Observations, st.LiveObservations)
 	fmt.Printf("sessions:          %d\n", st.Sessions)
 	fmt.Printf("skills:            %d\n", len(skillCount))
@@ -90,15 +103,15 @@ func runStats(ctx context.Context, _ []string) error {
 }
 
 func runSessions(ctx context.Context, _ []string) error {
-	db, _, sess, _, _, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	list, err := sess.Recent(ctx, "", 20)
+	list, err := d.sess.Recent(ctx, "", 20)
 	if err != nil {
-		return err
+		return fmt.Errorf("list sessions: %w", err)
 	}
 	if len(list) == 0 {
 		fmt.Println("no sessions yet")
@@ -116,11 +129,11 @@ func runSessions(ctx context.Context, _ []string) error {
 }
 
 func runExport(ctx context.Context, args []string) error {
-	db, _, _, _, _, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
 	out := io.Writer(os.Stdout)
 	if len(args) > 0 {
@@ -132,13 +145,16 @@ func runExport(ctx context.Context, args []string) error {
 		out = f
 	}
 
-	snapshot, err := dumpAll(ctx, db)
+	snap, err := dumpAll(ctx, d.db)
 	if err != nil {
-		return err
+		return fmt.Errorf("dump: %w", err)
 	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")
-	return enc.Encode(snapshot)
+	if err := enc.Encode(snap); err != nil {
+		return fmt.Errorf("encode: %w", err)
+	}
+	return nil
 }
 
 func runImport(ctx context.Context, args []string) error {
@@ -156,16 +172,16 @@ func runImport(ctx context.Context, args []string) error {
 		return fmt.Errorf("decode %s: %w", args[0], err)
 	}
 
-	db, mem, sess, skl, _, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
 	// Skills first so any references in observations.source_sessions resolve;
 	// sessions before observations so the FK is satisfied.
 	for _, sk := range snap.Skills {
-		if _, err := skl.Save(ctx, skills.SaveInput{
+		if _, err := d.skl.Save(ctx, skills.SaveInput{
 			AgentID: sk.AgentID, Name: sk.Name, Description: sk.Description,
 			Procedure: sk.Procedure, Pitfalls: sk.Pitfalls, Tags: sk.Tags,
 			SourceSessions: sk.SourceSessions,
@@ -174,14 +190,14 @@ func runImport(ctx context.Context, args []string) error {
 		}
 	}
 	for _, s := range snap.Sessions {
-		if _, err := sess.Open(ctx, session.OpenInput{
+		if _, err := d.sess.Open(ctx, session.OpenInput{
 			AgentID: s.AgentID, Project: s.Project, Goal: s.Goal,
 		}); err != nil {
 			return fmt.Errorf("import session %s: %w", s.ID, err)
 		}
 	}
 	for _, o := range snap.Observations {
-		if _, err := mem.Save(ctx, memory.SaveInput{
+		if _, err := d.mem.Save(ctx, memory.SaveInput{
 			AgentID: o.AgentID, Project: o.Project, Title: o.Title,
 			Content: o.Content, Type: o.Type, Tags: o.Tags,
 			Importance: o.Importance, Rationale: o.Rationale,
@@ -196,21 +212,21 @@ func runImport(ctx context.Context, args []string) error {
 }
 
 func runPrune(ctx context.Context, _ []string) error {
-	db, mem, _, _, _, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	n, err := mem.Prune(ctx)
+	n, err := d.mem.Prune(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("prune: %w", err)
 	}
 	fmt.Printf("pruned %d expired observations\n", n)
 	return nil
 }
 
-func runConfig(ctx context.Context, args []string) error {
+func runConfig(_ context.Context, args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	cfgPath := fs.String("path", config.DefaultPath(), "config path")
 	if err := fs.Parse(args); err != nil {
@@ -222,21 +238,18 @@ func runConfig(ctx context.Context, args []string) error {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(cfg)
+	if err := enc.Encode(cfg); err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	return nil
 }
 
 func runInit(_ context.Context, _ []string) error {
-	// Determine the absolute path to this binary so the MCP config doesn't
-	// rely on $PATH being set correctly for the agent.
 	selfPath, err := os.Executable()
 	if err != nil {
 		selfPath = "mnemos"
 	}
-
-	entry := installer.ServerEntry{
-		Command: selfPath,
-		Args:    []string{"serve"},
-	}
+	entry := installer.ServerEntry{Command: selfPath, Args: []string{"serve"}}
 
 	targets := installer.DetectTargets()
 	if len(targets) == 0 {
@@ -244,7 +257,6 @@ func runInit(_ context.Context, _ []string) error {
 		fmt.Println("install one of them first, then run `mnemos init` again.")
 		return nil
 	}
-
 	for _, t := range targets {
 		changed, err := installer.Install(t, entry)
 		if err != nil {
@@ -264,7 +276,7 @@ func runInit(_ context.Context, _ []string) error {
 
 func runDoctor(ctx context.Context, _ []string) error {
 	ok := true
-	print := func(pass bool, format string, args ...any) {
+	check := func(pass bool, format string, args ...any) {
 		prefix := "  ✓ "
 		if !pass {
 			prefix = "  ✗ "
@@ -273,36 +285,32 @@ func runDoctor(ctx context.Context, _ []string) error {
 		fmt.Printf(prefix+format+"\n", args...)
 	}
 
-	// Binary and version.
 	selfPath, _ := os.Executable()
-	print(selfPath != "", "binary path: %s", selfPath)
+	check(selfPath != "", "binary path: %s", selfPath)
 
-	// Config + storage.
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil {
-		print(false, "config load: %v", err)
-		return err
+		check(false, "config load: %v", err)
+		return fmt.Errorf("doctor: %w", err)
 	}
-	print(true, "config: %s", config.DefaultPath())
+	check(true, "config: %s", config.DefaultPath())
 
 	db, err := storage.Open(ctx, cfg.Storage.Path)
 	if err != nil {
-		print(false, "storage open: %v", err)
-		return err
+		check(false, "storage open: %v", err)
+		return fmt.Errorf("doctor: %w", err)
 	}
 	defer db.Close()
 	st, _ := db.Observations().Stats(ctx)
-	print(true, "storage: %s (%d observations)", cfg.Storage.Path, st.Observations)
+	check(true, "storage: %s (%d observations)", cfg.Storage.Path, st.Observations)
 
-	// Agent client registrations.
 	targets := installer.DetectTargets()
 	if len(targets) == 0 {
-		print(false, "no agent clients detected")
+		check(false, "no agent clients detected")
 	}
 	for _, t := range targets {
-		print(installer.IsInstalled(t), "%s %s", t.Name, t.Path)
+		check(installer.IsInstalled(t), "%s %s", t.Name, t.Path)
 	}
-
 	if !ok {
 		return errors.New("doctor found issues")
 	}
@@ -320,17 +328,17 @@ func dumpAll(ctx context.Context, db *storage.DB) (*snapshot, error) {
 	out := &snapshot{}
 	rows, err := db.SQL().QueryContext(ctx, `SELECT id FROM observations`)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list observations: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan id: %w", err)
 		}
 		o, err := db.Observations().Get(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("load %s: %w", id, err)
 		}
 		out.Observations = append(out.Observations, *o)
 	}

@@ -49,24 +49,26 @@ func (j Journal) Summary() string {
 }
 
 // Service runs consolidation. Stateless — every Run is independent.
+// Depends only on the Maintenance surface of the observation store, plus
+// the memory.Service for writing dream-journal observations.
 type Service struct {
 	mem   *memory.Service
-	store memory.Store
+	store memory.Maintenance
 	log   *slog.Logger
 
-	staleDays     int
-	decayAmount   int
+	staleDays      int
+	decayAmount    int
 	dedupThreshold int
 }
 
 // Config bundles dependencies.
 type Config struct {
-	Memory       *memory.Service
-	Store        memory.Store
-	Logger       *slog.Logger
-	StaleDays    int // importance decay kicks in past this many days idle; default 30
-	DecayAmount  int // how much to subtract; default 1
-	DedupWindow  int // how many title-similar candidates to link per primary; default 3
+	Memory      *memory.Service
+	Store       memory.Maintenance
+	Logger      *slog.Logger
+	StaleDays   int // importance decay kicks in past this many days idle; default 30
+	DecayAmount int // how much to subtract; default 1
+	DedupWindow int // how many title-similar candidates to link per primary; default 3
 }
 
 // NewService constructs a dream service.

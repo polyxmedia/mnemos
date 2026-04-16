@@ -20,11 +20,12 @@ import (
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
 
-// Service builds pre-warm blocks. It depends on the read-side of each
-// domain store plus the safety scanner. Construction is explicit — no
-// globals, no hidden wiring.
+// Service builds pre-warm blocks. It depends on the read-side of the
+// observation store plus the session/skill readers and the safety scanner.
+// Writes are not needed here, so we accept memory.Reader — narrower is
+// easier to mock and harder to misuse.
 type Service struct {
-	obs       memory.Store
+	obs       memory.Reader
 	sessions  session.Store
 	skills    skills.Store
 	touches   memory.TouchStore
@@ -34,7 +35,7 @@ type Service struct {
 
 // Config bundles dependencies.
 type Config struct {
-	Observations memory.Store
+	Observations memory.Reader
 	Sessions     session.Store
 	Skills       skills.Store
 	Touches      memory.TouchStore

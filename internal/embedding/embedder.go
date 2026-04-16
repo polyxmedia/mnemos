@@ -1,11 +1,13 @@
-// Package embedding provides pluggable embedding providers used by the
-// hybrid search layer. Embeddings are optional — when no provider is
-// configured, Mnemos runs pure FTS5 and still works.
+// Package embedding provides pluggable embedding providers for hybrid
+// retrieval. The consumer interface (Embedder) lives in internal/memory
+// — idiomatic Go: interfaces declared where they are consumed, not where
+// they are implemented. The types here (Ollama, OpenAI, Noop) implicitly
+// satisfy memory.Embedder.
 //
-// Supported providers:
+// Providers:
 //   - Ollama (auto-detected; recommended for local, zero-cost use)
-//   - OpenAI-compatible (any endpoint that speaks /v1/embeddings)
-//   - Noop (fallback: returns nil vectors, disables vector search)
+//   - OpenAI-compatible (any endpoint speaking /v1/embeddings)
+//   - Noop (no-op fallback: returns nil vectors, disables vector search)
 package embedding
 
 import (
@@ -13,32 +15,17 @@ import (
 	"errors"
 )
 
-// Embedder turns text into a fixed-length float32 vector. Implementations
-// MUST return vectors of the same Dimension on every call.
-type Embedder interface {
-	// Embed returns a vector for text. Empty input returns (nil, nil).
-	Embed(ctx context.Context, text string) ([]float32, error)
-
-	// Dimension returns the vector length this embedder produces.
-	Dimension() int
-
-	// Model returns the model identifier (e.g. "nomic-embed-text"). Used
-	// so we can re-embed when the model changes.
-	Model() string
-}
-
-// ErrNotConfigured signals that embedding is disabled (no-op provider).
-// Callers can use errors.Is(err, ErrNotConfigured) to detect the
-// FTS5-only mode gracefully.
+// ErrNotConfigured signals that embedding is disabled. Callers can
+// distinguish FTS5-only mode via errors.Is.
 var ErrNotConfigured = errors.New("embedding: not configured")
 
-// Noop is a fall-through embedder that returns nil vectors. Used when
-// no provider is configured; keeps the search path simple by always
-// having a non-nil Embedder.
+// Noop is the zero-value embedder: returns nil vectors, dimension 0.
+// Keeps the search path simple by always having a non-nil provider
+// instead of scattered nil-checks.
 type Noop struct{}
 
 // NewNoop returns a no-op embedder.
-func NewNoop() Embedder { return Noop{} }
+func NewNoop() Noop { return Noop{} }
 
 // Embed always returns nil — signals "no embedding available".
 func (Noop) Embed(_ context.Context, _ string) ([]float32, error) { return nil, nil }

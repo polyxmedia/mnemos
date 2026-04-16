@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/polyxmedia/mnemos/internal/dream"
-	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/vault"
 )
 
@@ -24,39 +23,39 @@ func runDream(ctx context.Context, args []string) error {
 		return err
 	}
 
-	db, mem, _, _, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
 	svc := dream.NewService(dream.Config{
-		Memory:      mem,
-		Store:       db.Observations(),
+		Memory:      d.mem,
+		Store:       d.db.Observations(),
 		Logger:      slog.Default(),
-		StaleDays:   cfg.Dream.StaleDays,
-		DecayAmount: cfg.Dream.DecayAmount,
+		StaleDays:   d.cfg.Dream.StaleDays,
+		DecayAmount: d.cfg.Dream.DecayAmount,
 	})
 
 	if *watch {
-		d := *interval
-		if d == 0 {
-			parsed, err := time.ParseDuration(cfg.Dream.Interval)
-			if err != nil && cfg.Dream.Interval != "" {
+		every := *interval
+		if every == 0 {
+			parsed, err := time.ParseDuration(d.cfg.Dream.Interval)
+			if err != nil && d.cfg.Dream.Interval != "" {
 				return fmt.Errorf("parse [dream].interval: %w", err)
 			}
-			d = parsed
+			every = parsed
 		}
-		if d == 0 {
-			d = 6 * time.Hour
+		if every == 0 {
+			every = 6 * time.Hour
 		}
-		fmt.Fprintf(os.Stderr, "dream watch: every %s (ctrl-c to stop)\n", d)
-		return svc.Watch(ctx, d)
+		fmt.Fprintf(os.Stderr, "dream watch: every %s (ctrl-c to stop)\n", every)
+		return svc.Watch(ctx, every)
 	}
 
 	j, err := svc.Run(ctx, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("dream: %w", err)
 	}
 	fmt.Println(j.Summary())
 	return nil
@@ -89,37 +88,34 @@ func runVaultWatch(ctx context.Context, args []string) error {
 		return err
 	}
 
-	db, _, _, _, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	root := cfg.Vault.Path
+	root := d.cfg.Vault.Path
 	if root == "" {
 		return fmt.Errorf("no vault path configured; set [vault].path")
 	}
-
-	d := *interval
-	if d == 0 {
-		parsed, err := vault.ParseInterval(cfg.Vault.WatchInterval)
+	every := *interval
+	if every == 0 {
+		parsed, err := vault.ParseInterval(d.cfg.Vault.WatchInterval)
 		if err != nil {
 			return err
 		}
-		d = parsed
+		every = parsed
 	}
-	if d == 0 {
-		d = 5 * time.Minute
+	if every == 0 {
+		every = 5 * time.Minute
 	}
 
 	ex := vault.NewExporter(vault.Config{
-		Root:     root,
-		Obs:      db.Observations(),
-		Sessions: db.Sessions(),
-		Skills:   db.Skills(),
+		Root: root, Obs: d.db.Observations(),
+		Sessions: d.db.Sessions(), Skills: d.db.Skills(),
 	})
-	fmt.Fprintf(os.Stderr, "vault watch: %s every %s (ctrl-c to stop)\n", root, d)
-	return ex.Watch(ctx, d)
+	fmt.Fprintf(os.Stderr, "vault watch: %s every %s (ctrl-c to stop)\n", root, every)
+	return ex.Watch(ctx, every)
 }
 
 func runVaultExport(ctx context.Context, args []string) error {
@@ -129,13 +125,13 @@ func runVaultExport(ctx context.Context, args []string) error {
 		return err
 	}
 
-	db, _, _, _, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	root := cfg.Vault.Path
+	root := d.cfg.Vault.Path
 	if *out != "" {
 		root = *out
 	}
@@ -144,14 +140,12 @@ func runVaultExport(ctx context.Context, args []string) error {
 	}
 
 	ex := vault.NewExporter(vault.Config{
-		Root:     root,
-		Obs:      db.Observations(),
-		Sessions: db.Sessions(),
-		Skills:   db.Skills(),
+		Root: root, Obs: d.db.Observations(),
+		Sessions: d.db.Sessions(), Skills: d.db.Skills(),
 	})
 	stats, err := ex.ExportAll(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("vault export: %w", err)
 	}
 	fmt.Printf("exported %d observations, %d sessions, %d skills, %d tag MOCs to %s\n",
 		stats.Observations, stats.Sessions, stats.Skills, stats.Tags, root)
@@ -159,14 +153,14 @@ func runVaultExport(ctx context.Context, args []string) error {
 }
 
 func runVaultStatus(ctx context.Context, _ []string) error {
-	db, _, _, _, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	fmt.Printf("vault path: %s\n", cfg.Vault.Path)
-	if _, err := os.Stat(cfg.Vault.Path); err != nil {
+	fmt.Printf("vault path: %s\n", d.cfg.Vault.Path)
+	if _, err := os.Stat(d.cfg.Vault.Path); err != nil {
 		fmt.Println("status:     not yet exported")
 		return nil
 	}
@@ -191,34 +185,35 @@ func runEmbed(ctx context.Context, args []string) error {
 }
 
 func runEmbedStatus(ctx context.Context) error {
-	_, mem, _, _, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("provider: %s\n", cfg.Embedding.Provider)
-	fmt.Printf("model:    %s\n", cfg.Embedding.Model)
-	fmt.Printf("enabled:  %v\n", mem.HybridEnabled())
+	defer d.close()
+	fmt.Printf("provider: %s\n", d.cfg.Embedding.Provider)
+	fmt.Printf("model:    %s\n", d.cfg.Embedding.Model)
+	fmt.Printf("enabled:  %v\n", d.mem.HybridEnabled())
 	return nil
 }
 
 func runEmbedBackfill(ctx context.Context) error {
-	db, _, _, _, cfg, err := loadServices(ctx)
+	d, err := loadDeps(ctx)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer d.close()
 
-	embedder := selectEmbedder(ctx, cfg.Embedding)
+	embedder := selectEmbedder(ctx, d.cfg.Embedding)
 	if embedder.Dimension() == 0 {
 		return fmt.Errorf("no embedding provider available — check `embed status`")
 	}
 
-	store := db.Observations()
+	store := d.db.Observations()
 	var total int
 	for {
 		batch, err := store.ListMissingEmbeddings(ctx, 100)
 		if err != nil {
-			return err
+			return fmt.Errorf("list missing: %w", err)
 		}
 		if len(batch) == 0 {
 			break
@@ -234,7 +229,7 @@ func runEmbedBackfill(ctx context.Context) error {
 				continue
 			}
 			if err := store.UpdateEmbedding(ctx, o.ID, embedder.Model(), vec); err != nil {
-				return err
+				return fmt.Errorf("update embedding %s: %w", o.ID, err)
 			}
 			total++
 		}
@@ -245,6 +240,3 @@ func runEmbedBackfill(ctx context.Context) error {
 	fmt.Printf("backfilled %d embeddings\n", total)
 	return nil
 }
-
-// Silence unused-variable lint for the memory.Observation type import.
-var _ = memory.Observation{}

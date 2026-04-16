@@ -4,12 +4,13 @@ Mnemos is a layered Go service with strict boundaries. This document walks the l
 
 ## Principles
 
-- **Domain packages own interfaces. Storage implements them.** `memory`, `session`, and `skills` declare `Store` interfaces. `internal/storage` satisfies all three, sharing a single `*sql.DB`.
-- **Transports are thin adapters.** `internal/mcp` translates JSON-RPC into service calls. A future `internal/api` will do the same for HTTP. No business logic in transports.
+- **Interfaces declared where they're consumed.** `memory.Reader/Writer/Maintenance/Exportable/Vectorable` live in the memory package because services depend on them; the `storage` package implicitly satisfies them. This is the stdlib `io.Reader` idiom — segregated, composable, easy to mock.
+- **Transports are thin adapters.** `internal/mcp` wraps the official Model Context Protocol Go SDK; `internal/api` is a stdlib `net/http` adapter. Neither contains business logic.
 - **No global state. No `init()` side effects. No reflection wiring.** All dependencies are constructor-injected.
-- **Errors wrapped at every boundary.** `fmt.Errorf("context: %w", err)`. Nothing escapes naked.
+- **Errors wrapped at every boundary** with `fmt.Errorf("context: %w", err)`. Nothing escapes naked.
 - **Context propagation.** Every public method takes `context.Context` first.
 - **Tests live next to code.** Table-driven where patterns repeat; end-to-end at each layer's public API.
+- **Don't reinvent the wheel.** We use the official MCP SDK (protocol compliance + schema inference), `gopkg.in/yaml.v3` (robust YAML for vault frontmatter), `golang.org/x/sync/errgroup` (clean daemon lifecycle), `BurntSushi/toml` (config), `modernc.org/sqlite` (pure-Go driver), `oklog/ulid/v2` (sortable IDs). Everything else is stdlib.
 
 ## Layer map
 
@@ -76,7 +77,9 @@ Procedural memory. `(agent_id, name)` is unique; saving the same name again bump
 
 ## MCP
 
-Minimal JSON-RPC 2.0 over newline-delimited JSON on stdio. Handlers are a `map[string]toolHandler`; schemas are inline JSON Schema. No generated code, no reflection. Resources (`mnemos://session/current`, `mnemos://skills/index`, `mnemos://stats`) are read-only snapshots.
+We use the [official Model Context Protocol Go SDK](https://github.com/modelcontextprotocol/go-sdk) (v1.5.x, maintained in collaboration with Google). Each tool is registered via `mcp.AddTool[In, Out]` with a typed argument struct — JSON schemas are inferred from `json` and `jsonschema` struct tags, and the SDK validates inputs before invoking the handler. Our `internal/mcp` package is a thin wrapping layer (~750 LOC) that owns (a) the Config + NewServer wiring, (b) the 14 tool handlers, and (c) the 3 resource handlers. Protocol framing, JSON-RPC, version negotiation, cancellation, and transport plumbing are all the SDK's job.
+
+Resources (`mnemos://session/current`, `mnemos://skills/index`, `mnemos://stats`) are read-only JSON snapshots.
 
 ## Installer / doctor
 

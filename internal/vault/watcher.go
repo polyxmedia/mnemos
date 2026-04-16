@@ -4,39 +4,46 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
-// Watch runs the exporter on a ticker until ctx is cancelled. Each tick
-// performs a full export (cheap; SQLite is fast and writes are rare on
-// the vault side). If interval is <= 0, Watch returns immediately with
-// no error — caller can treat that as "watch disabled".
+// Watch runs the exporter on a ticker until ctx is cancelled. An initial
+// full export runs immediately so the user sees output right away. Each
+// tick performs a full export (cheap for realistic sizes; incremental
+// sync is handled inside ExportAll via last_exported_at).
+//
+// Interval <= 0 is a no-op — treat as "watch disabled".
 func (e *Exporter) Watch(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		return nil
 	}
-	// Immediate first sync so the user sees output right away.
-	if _, err := e.ExportAll(ctx); err != nil {
-		e.log.Warn("vault initial export failed", "err", err)
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			stats, err := e.ExportAll(ctx)
-			if err != nil {
-				e.log.Warn("vault export failed", "err", err)
-				continue
-			}
-			e.log.Info("vault export",
-				"observations", stats.Observations,
-				"sessions", stats.Sessions,
-				"skills", stats.Skills,
-				"tags", stats.Tags)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		if _, err := e.ExportAll(gctx); err != nil {
+			e.log.Warn("vault initial export failed", "err", err)
 		}
-	}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-gctx.Done():
+				return nil
+			case <-ticker.C:
+				stats, err := e.ExportAll(gctx)
+				if err != nil {
+					e.log.Warn("vault export failed", "err", err)
+					continue
+				}
+				e.log.Info("vault export",
+					"observations", stats.Observations,
+					"sessions", stats.Sessions,
+					"skills", stats.Skills,
+					"tags", stats.Tags)
+			}
+		}
+	})
+	return g.Wait()
 }
 
 // ParseInterval wraps time.ParseDuration with a friendlier error so the
