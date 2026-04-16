@@ -180,6 +180,7 @@ Based on public documentation as of April 2026. If anything's wrong, [open an is
 - **Compaction recovery mode** — dedicated API for restoring session state after the agent's context was compacted.
 - **Structured correction journal** — `tried / wrong_because / fix` as a first-class observation type with retrieval boosting.
 - **Prompt-injection scanner at the injection boundary** — flags instruction-override / role-spoof / zero-width-unicode patterns before content reaches the agent.
+- **Portable skill packs** — export any skill (or all of them) as a JSON pack, share via file or URL, `mnemos skill import https://...` installs it in one command. Runtime stats are stripped, pack versioning is strict. Turns procedural memory into a social layer.
 - **Obsidian vault export** — full markdown graph with wikilinks.
 
 **What others do better than us:**
@@ -207,6 +208,9 @@ Based on public documentation as of April 2026. If anything's wrong, [open an is
 | `mnemos dream [--watch]` | Consolidation pass (or daemon) |
 | `mnemos vault export\|watch\|status` | Obsidian vault sync |
 | `mnemos embed status\|backfill` | Embedding provider tools |
+| `mnemos skill list` | Show installed skills |
+| `mnemos skill export [names...] [--out file]` | Build a shareable skill pack |
+| `mnemos skill import <file-or-url>` | Install a pack from disk or an `https://` URL |
 | `mnemos config` | Print current config |
 | `mnemos version` | Print version |
 
