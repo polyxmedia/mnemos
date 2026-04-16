@@ -52,6 +52,23 @@ latest_version() {
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1
 }
 
+fallback_from_source() {
+  log "no released binaries yet — falling back to \`go install\`"
+  if ! command -v go >/dev/null 2>&1; then
+    err "go toolchain not found. install Go 1.23+ or wait for a released binary."
+  fi
+  local gobin="${GOPATH:-$HOME/go}/bin"
+  if ! GOBIN="$gobin" go install github.com/polyxmedia/mnemos/cmd/mnemos@latest; then
+    err "go install failed. run manually: go install github.com/polyxmedia/mnemos/cmd/mnemos@latest"
+  fi
+  ok "installed $gobin/mnemos"
+  log "registering with agent clients"
+  "$gobin/mnemos" init || true
+  echo
+  ok "done. restart your agent."
+  exit 0
+}
+
 main() {
   local os arch version install_dir tmp archive asset url
   os="$(detect_os)"
@@ -60,7 +77,11 @@ main() {
 
   log "detecting latest mnemos release"
   version="$(latest_version || true)"
-  [[ -n "${version:-}" ]] || err "could not resolve latest version from GitHub"
+  if [[ -z "${version:-}" ]]; then
+    # No released tags yet — fall back to source install so pre-release
+    # users aren't stranded.
+    fallback_from_source
+  fi
   version="${version#v}"
   ok "version: v${version}"
 

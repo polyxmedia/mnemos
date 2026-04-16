@@ -21,24 +21,26 @@ import (
 
 // Server owns the HTTP handler tree.
 type Server struct {
-	mem     *memory.Service
-	sess    *session.Service
-	skill   *skills.Service
-	touches memory.TouchStore
-	prewarm *prewarm.Service
-	log     *slog.Logger
-	apiKey  string
+	mem         *memory.Service
+	sess        *session.Service
+	skill       *skills.Service
+	touches     memory.TouchStore
+	prewarm     *prewarm.Service
+	log         *slog.Logger
+	apiKey      string
+	storageSize func() (int64, error)
 }
 
 // Config bundles dependencies. APIKey is optional; when empty, auth is off.
 type Config struct {
-	Memory   *memory.Service
-	Sessions *session.Service
-	Skills   *skills.Service
-	Touches  memory.TouchStore
-	Prewarm  *prewarm.Service
-	Logger   *slog.Logger
-	APIKey   string
+	Memory      *memory.Service
+	Sessions    *session.Service
+	Skills      *skills.Service
+	Touches     memory.TouchStore
+	Prewarm     *prewarm.Service
+	Logger      *slog.Logger
+	APIKey      string
+	StorageSize func() (int64, error) // optional: reports storage_bytes in /v1/stats
 }
 
 // NewServer constructs the HTTP server. Call Handler() for use with
@@ -48,13 +50,14 @@ func NewServer(cfg Config) *Server {
 		cfg.Logger = slog.Default()
 	}
 	return &Server{
-		mem:     cfg.Memory,
-		sess:    cfg.Sessions,
-		skill:   cfg.Skills,
-		touches: cfg.Touches,
-		prewarm: cfg.Prewarm,
-		log:     cfg.Logger,
-		apiKey:  cfg.APIKey,
+		mem:         cfg.Memory,
+		sess:        cfg.Sessions,
+		skill:       cfg.Skills,
+		touches:     cfg.Touches,
+		prewarm:     cfg.Prewarm,
+		log:         cfg.Logger,
+		apiKey:      cfg.APIKey,
+		storageSize: cfg.StorageSize,
 	}
 }
 
@@ -365,7 +368,23 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, st)
+	out := map[string]any{
+		"observations":      st.Observations,
+		"live_observations": st.LiveObservations,
+		"sessions":          st.Sessions,
+		"skills":            st.Skills,
+		"top_tags":          st.TopTags,
+		"recent_sessions":   st.RecentSessions,
+		"embedding": map[string]any{
+			"enabled": s.mem.HybridEnabled(),
+		},
+	}
+	if s.storageSize != nil {
+		if size, err := s.storageSize(); err == nil {
+			out["storage_bytes"] = size
+		}
+	}
+	writeJSON(w, 200, out)
 }
 
 // --- helpers ------------------------------------------------------------

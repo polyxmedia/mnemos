@@ -79,6 +79,13 @@ func runServe(ctx context.Context, args []string) error {
 			Prewarm:  pw,
 			APIKey:   cfg.Server.APIKey,
 			Logger:   logger,
+			StorageSize: func() (int64, error) {
+				fi, err := os.Stat(cfg.Storage.Path)
+				if err != nil {
+					return 0, err
+				}
+				return fi.Size(), nil
+			},
 		})
 		logger.Info("mnemos serve (http)", "version", version.Version, "addr", addr)
 		return httpSrv.Serve(ctx, addr)
@@ -93,6 +100,13 @@ func runServe(ctx context.Context, args []string) error {
 		Touches:  db.Touches(),
 		Prewarm:  pw,
 		Logger:   logger,
+		StorageSize: func() (int64, error) {
+			fi, err := os.Stat(cfg.Storage.Path)
+			if err != nil {
+				return 0, err
+			}
+			return fi.Size(), nil
+		},
 	})
 
 	logger.Info("mnemos serve (stdio)", "version", version.Version, "db", cfg.Storage.Path)

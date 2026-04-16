@@ -85,8 +85,9 @@ Commands:
   export [file]          Export all data as JSON
   import <file>          Import data from JSON
   prune                  Remove expired observations
-  dream                  Run one consolidation pass (dedup, decay, prune)
+  dream [--watch]        Run a consolidation pass (or daemon with --watch)
   vault export           Export memory to an Obsidian-compatible vault
+  vault watch            Daemon: keep the vault in sync on a timer
   vault status           Show vault sync status
   embed status           Show embedding provider status
   embed backfill         Generate embeddings for observations that lack them

@@ -145,11 +145,54 @@ func runImport(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: mnemos import <file>")
 	}
-	_, err := os.Stat(args[0])
+	f, err := os.Open(args[0])
 	if err != nil {
-		return fmt.Errorf("stat %s: %w", args[0], err)
+		return fmt.Errorf("open %s: %w", args[0], err)
 	}
-	return fmt.Errorf("import not yet implemented — see issue #1")
+	defer f.Close()
+
+	var snap snapshot
+	if err := json.NewDecoder(f).Decode(&snap); err != nil {
+		return fmt.Errorf("decode %s: %w", args[0], err)
+	}
+
+	db, mem, sess, skl, _, err := loadServices(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Skills first so any references in observations.source_sessions resolve;
+	// sessions before observations so the FK is satisfied.
+	for _, sk := range snap.Skills {
+		if _, err := skl.Save(ctx, skills.SaveInput{
+			AgentID: sk.AgentID, Name: sk.Name, Description: sk.Description,
+			Procedure: sk.Procedure, Pitfalls: sk.Pitfalls, Tags: sk.Tags,
+			SourceSessions: sk.SourceSessions,
+		}); err != nil {
+			return fmt.Errorf("import skill %s: %w", sk.Name, err)
+		}
+	}
+	for _, s := range snap.Sessions {
+		if _, err := sess.Open(ctx, session.OpenInput{
+			AgentID: s.AgentID, Project: s.Project, Goal: s.Goal,
+		}); err != nil {
+			return fmt.Errorf("import session %s: %w", s.ID, err)
+		}
+	}
+	for _, o := range snap.Observations {
+		if _, err := mem.Save(ctx, memory.SaveInput{
+			AgentID: o.AgentID, Project: o.Project, Title: o.Title,
+			Content: o.Content, Type: o.Type, Tags: o.Tags,
+			Importance: o.Importance, Rationale: o.Rationale,
+			Structured: o.Structured,
+		}); err != nil {
+			return fmt.Errorf("import observation %s: %w", o.ID, err)
+		}
+	}
+	fmt.Printf("imported %d observations, %d sessions, %d skills from %s\n",
+		len(snap.Observations), len(snap.Sessions), len(snap.Skills), args[0])
+	return nil
 }
 
 func runPrune(ctx context.Context, _ []string) error {

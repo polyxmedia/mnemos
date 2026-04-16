@@ -604,8 +604,9 @@ func (s *Server) toolSkillSave() toolDef {
 func (s *Server) toolStats() toolDef {
 	return toolDef{
 		tool: Tool{
-			Name:        "mnemos_stats",
-			Description: "Memory system statistics: counts, top tags, recent sessions.",
+			Name: "mnemos_stats",
+			Description: "Memory system statistics: counts, storage size, top tags, " +
+				"recent sessions, embedding status (model + whether hybrid search is active).",
 			InputSchema: mustSchema(`{"type":"object","properties":{}}`),
 		},
 		handler: func(ctx context.Context, _ json.RawMessage) (*ToolResult, error) {
@@ -614,14 +615,23 @@ func (s *Server) toolStats() toolDef {
 				return nil, err
 			}
 			skillCount, _ := s.skill.List(ctx, "")
-			return jsonResult(map[string]any{
+			out := map[string]any{
 				"observations":      st.Observations,
 				"live_observations": st.LiveObservations,
 				"sessions":          st.Sessions,
 				"skills":            len(skillCount),
 				"top_tags":          st.TopTags,
 				"recent_sessions":   st.RecentSessions,
-			})
+				"embedding": map[string]any{
+					"enabled": s.mem.HybridEnabled(),
+				},
+			}
+			if s.storageSize != nil {
+				if size, err := s.storageSize(); err == nil {
+					out["storage_bytes"] = size
+				}
+			}
+			return jsonResult(out)
 		},
 	}
 }

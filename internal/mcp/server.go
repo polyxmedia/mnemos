@@ -28,6 +28,8 @@ type Server struct {
 	prewarm *prewarm.Service
 	log     *slog.Logger
 
+	storageSize func() (int64, error)
+
 	mu              sync.Mutex // serialises stdout writes
 	handlers        map[string]toolHandler
 	toolOrder       []string
@@ -36,14 +38,15 @@ type Server struct {
 
 // Config bundles dependencies for NewServer.
 type Config struct {
-	Name     string
-	Version  string
-	Memory   *memory.Service
-	Sessions *session.Service
-	Skills   *skills.Service
-	Touches  memory.TouchStore
-	Prewarm  *prewarm.Service
-	Logger   *slog.Logger
+	Name        string
+	Version     string
+	Memory      *memory.Service
+	Sessions    *session.Service
+	Skills      *skills.Service
+	Touches     memory.TouchStore
+	Prewarm     *prewarm.Service
+	Logger      *slog.Logger
+	StorageSize func() (int64, error) // optional: powers storage_bytes in mnemos_stats
 }
 
 // NewServer builds an MCP server from service dependencies.
@@ -58,14 +61,15 @@ func NewServer(cfg Config) *Server {
 		cfg.Version = "dev"
 	}
 	s := &Server{
-		name:    cfg.Name,
-		version: cfg.Version,
-		mem:     cfg.Memory,
-		sess:    cfg.Sessions,
-		skill:   cfg.Skills,
-		touches: cfg.Touches,
-		prewarm: cfg.Prewarm,
-		log:     cfg.Logger,
+		name:        cfg.Name,
+		version:     cfg.Version,
+		mem:         cfg.Memory,
+		sess:        cfg.Sessions,
+		skill:       cfg.Skills,
+		touches:     cfg.Touches,
+		prewarm:     cfg.Prewarm,
+		log:         cfg.Logger,
+		storageSize: cfg.StorageSize,
 	}
 	s.registerTools()
 	return s
