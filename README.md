@@ -163,19 +163,32 @@ Then use `pkg/client` from Go, or call `POST /v1/observations` and friends direc
 
 ## How it compares
 
-|  | Mnemos | Mem0 | Zep | Hermes Agent | MemPalace |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| MCP-native (Claude Code / Cursor) | ✓ | via MCP bridge | via MCP bridge | — | ✓ |
-| Single binary, zero runtime deps | ✓ | — | — | — | — |
-| Push context at session start | ✓ | — | — | — | — |
-| Correction journal (structured) | ✓ | — | — | — | — |
-| Compaction recovery | ✓ | — | — | — | — |
-| Bi-temporal supersession | ✓ | — | ✓ | — | partial |
-| Prompt-injection scanner | ✓ | — | — | — | — |
-| Runs local with Ollama auto-probe | ✓ | — | — | ✓ | ✓ |
-| Obsidian vault export | ✓ | — | — | — | — |
-| Hybrid BM25 + vectors | ✓ | vectors | vectors | vectors | vectors |
-| Pure Go (no Python/Node runtime) | ✓ | — | — | — | — |
+Based on public documentation as of April 2026. If anything's wrong, [open an issue](https://github.com/polyxmedia/mnemos/issues) — we'll fix it.
+
+|  | Mnemos | Mem0 | Zep | MemPalace |
+| --- | :---: | :---: | :---: | :---: |
+| Language / runtime | Go (single binary) | Python service | Go server + Postgres/Neo4j | Python + ChromaDB |
+| MCP-native | ✓ | via bridge | via bridge | ✓ |
+| Bi-temporal model | ✓ (facts + system time) | temporal extraction | ✓ (Graphiti) | validity windows |
+| Hybrid retrieval | BM25 + vectors (RRF) | vectors + LLM rerank | hybrid graph + vectors | vectors |
+| Local-first (no API required) | ✓ | — (SaaS primary) | ✓ (self-host) | ✓ |
+| Auto-enables Ollama if present | ✓ | — | — | — |
+
+**Things we think are unique to Mnemos** (we haven't found them in the others' public docs; if we missed something, let us know):
+
+- **Push-based session prewarm** — `mnemos_session_start` returns a composed context block instead of just an ID.
+- **Compaction recovery mode** — dedicated API for restoring session state after the agent's context was compacted.
+- **Structured correction journal** — `tried / wrong_because / fix` as a first-class observation type with retrieval boosting.
+- **Prompt-injection scanner at the injection boundary** — flags instruction-override / role-spoof / zero-width-unicode patterns before content reaches the agent.
+- **Obsidian vault export** — full markdown graph with wikilinks.
+
+**What others do better than us:**
+
+- **Mem0** has the largest community (48k+ GitHub stars, rich integrations library). Mnemos is new.
+- **Zep/Graphiti** has a more sophisticated knowledge graph with entity extraction. Mnemos deliberately keeps the graph simple (typed links between observations).
+- **MemPalace** has verbatim conversation mining. Mnemos is agent-curated by design — higher signal but requires the agent to actively save.
+
+**Not included in the table** because they're a different category: [Hermes Agent](https://github.com/NousResearch/hermes-agent) is an end-to-end agent runtime (terminals, messaging, model routing), not a memory layer. Mnemos plugs into whatever agent you already use; Hermes is the agent. Complementary, not competing.
 
 ## CLI
 
@@ -205,35 +218,44 @@ See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for parameter details.
 
 ## FAQ
 
-**Do I need embeddings?**
+### Do I need embeddings?
+
 No. Mnemos runs pure FTS5 (BM25) by default and works great. If Ollama is running on your machine, vector search auto-enables and retrieval improves on paraphrased queries (~10pp recall bump on LongMemEval-style benchmarks). Zero config either way.
 
-**Will this slow Claude Code down?**
+### Will this slow Claude Code down?
+
 No. Session start returns in <10 ms with a 500-token prewarm block. Every search is a single SQLite query with BM25 ranking — typically sub-millisecond. The whole tool surface is designed so the agent gets more useful context *for fewer tokens*.
 
-**How does memory not pollute my agent's context?**
-Three guardrails: (1) strict token budgets on every inject path (prewarm ≤500, context tool ≤2000 by default), (2) importance weighting + recency decay so stale stuff gets buried, (3) a prompt-injection scanner at the injection boundary that flags or sanitises high-risk content before the agent sees it.
+### How does memory not pollute my agent's context?
 
-**What happens after I do `git commit` or close my terminal?**
+Three guardrails:
+1. Strict token budgets on every inject path (prewarm ≤500, context tool ≤2000 by default).
+2. Importance weighting + recency decay so stale stuff gets buried in ranking.
+3. A prompt-injection scanner at the injection boundary that flags or sanitises high-risk content before the agent sees it.
+
+### What happens after I do `git commit` or close my terminal?
+
 Nothing changes. Mnemos stores everything in `~/.mnemos/mnemos.db` (a SQLite file). Starts when your agent calls `mnemos_session_start`, runs while your agent is live, idles otherwise. No daemon needed.
 
-**Is my data sent anywhere?**
+### Is my data sent anywhere?
+
 Only if you explicitly configure an OpenAI-compatible embedder. By default Mnemos uses local FTS5 or local Ollama. Nothing leaves your machine. The HTTP API is optional and off by default.
 
-**Why Go?**
+### Why Go?
+
 Single static binary, cross-compiles to Linux/macOS/Windows × amd64/arm64. No CGO (we use `modernc.org/sqlite`), so no compiler toolchain on the install path. Docker-free, Python-free, Node-free.
 
-**How is this different from Hermes Agent?**
+### How is this different from Hermes Agent?
+
 Hermes is an end-to-end agent runtime (terminals, messaging platforms, model routing). Mnemos is only the memory layer — designed to plug into whatever agent you already use (Claude Code, Cursor, Windsurf, or any MCP client). Complementary, not competing.
 
-**How is this different from Mem0 / Zep / MemPalace?**
-- Mem0 / Zep are Python services that need their own deployment. Mnemos is one Go binary.
-- Zep has bi-temporal (we borrowed the idea). We added push-based session pre-warming, correction journal, compaction recovery, and promptware sanitisation.
-- MemPalace is Python + ChromaDB + requires verbatim conversation mining. Mnemos is agent-curated (the agent chooses what to remember), which produces higher-signal memories.
-- None of them ship prompt-injection sanitisation at the injection boundary.
+### How is this different from Mem0 / Zep / MemPalace?
 
-**Is Mnemos production-ready?**
-v0.1.x is stable API but early in adoption. Schema is bi-temporal so migrations are non-breaking. 63% test coverage (80-95% on core domain packages). Every feature end-to-end tested. Issues + contributions welcome.
+See the [comparison table above](#how-it-compares). Short version: Mem0 and Zep are Python/infra-heavy services; MemPalace is Python + ChromaDB and mines verbatim conversations. Mnemos is one Go binary, agent-curated, and ships with compaction recovery + correction journal + promptware sanitisation — none of which we've found in the others' public docs.
+
+### Is Mnemos production-ready?
+
+v0.1.x is stable API but early in adoption. Schema is bi-temporal so migrations are non-breaking. 70% test coverage (80-95% on core domain packages). Every feature end-to-end tested. Issues + contributions welcome.
 
 ## Configuration
 
@@ -306,6 +328,6 @@ MIT. See [LICENSE](LICENSE).
 
 ## About
 
-Built by [Polyx Media](https://polyxmedia.com). Follow [@voidmode](https://x.com/voidmode) for Mnemos updates, agent research, and build-in-public notes.
+Built by [Polyxmedia](https://polyxmedia.com). Follow [@voidmode](https://x.com/voidmode) for Mnemos updates, agent research, and build-in-public notes.
 
 If Mnemos helps you ship, a star is the fastest way to tell us. Issues and PRs welcome.
