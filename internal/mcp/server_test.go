@@ -12,6 +12,7 @@ import (
 
 	"github.com/polyxmedia/mnemos/internal/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 	"github.com/polyxmedia/mnemos/internal/storage"
@@ -31,7 +32,14 @@ func newTestServer(t *testing.T) *mcp.Server {
 		Memory:   memory.NewService(memory.Config{Store: db.Observations()}),
 		Sessions: session.NewService(session.Config{Store: db.Sessions()}),
 		Skills:   skills.NewService(skills.Config{Store: db.Skills()}),
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Touches:  db.Touches(),
+		Prewarm: prewarm.NewService(prewarm.Config{
+			Observations: db.Observations(),
+			Sessions:     db.Sessions(),
+			Skills:       db.Skills(),
+			Touches:      db.Touches(),
+		}),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 }
 
@@ -103,18 +111,19 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
-func TestToolsListReturnsAllTen(t *testing.T) {
+func TestToolsListReturnsAllFourteen(t *testing.T) {
 	srv := newTestServer(t)
 	resp := rpcCall(t, srv, 1, "tools/list", nil)
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 10 {
-		t.Errorf("expected 10 tools, got %d", len(tools))
+	if len(tools) != 14 {
+		t.Errorf("expected 14 tools, got %d", len(tools))
 	}
 	expected := []string{
-		"mnemos_save", "mnemos_search", "mnemos_get", "mnemos_delete",
+		"mnemos_save", "mnemos_search", "mnemos_get", "mnemos_delete", "mnemos_link",
 		"mnemos_session_start", "mnemos_session_end", "mnemos_context",
 		"mnemos_skill_match", "mnemos_skill_save", "mnemos_stats",
+		"mnemos_correct", "mnemos_convention", "mnemos_touch",
 	}
 	names := map[string]bool{}
 	for _, tool := range tools {
@@ -124,6 +133,109 @@ func TestToolsListReturnsAllTen(t *testing.T) {
 		if !names[want] {
 			t.Errorf("missing tool %s", want)
 		}
+	}
+}
+
+func TestSessionStartReturnsPrewarm(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Seed a convention for the project.
+	toolCall(t, srv, "mnemos_convention", map[string]any{
+		"title":     "error wrapping",
+		"rule":      "all errors wrapped with fmt.Errorf using %w",
+		"rationale": "preserves error chain for errors.Is",
+		"project":   "mnemos",
+	})
+
+	// Start a session on that project.
+	startResp := toolCall(t, srv, "mnemos_session_start", map[string]any{
+		"project": "mnemos",
+		"goal":    "add api route",
+	})
+	text := toolResultText(t, startResp)
+	if !strings.Contains(text, "prewarm") {
+		t.Errorf("session_start must return prewarm block, got: %s", text)
+	}
+	if !strings.Contains(text, "error wrapping") {
+		t.Errorf("prewarm must include seeded convention, got: %s", text)
+	}
+}
+
+func TestCorrectionAndLink(t *testing.T) {
+	srv := newTestServer(t)
+
+	// Save two related observations.
+	r1 := toolCall(t, srv, "mnemos_save", map[string]any{
+		"title": "Use X", "content": "we use X", "type": "decision",
+	})
+	var s1 map[string]any
+	_ = json.Unmarshal([]byte(toolResultText(t, r1)), &s1)
+	id1 := s1["id"].(string)
+
+	r2 := toolCall(t, srv, "mnemos_save", map[string]any{
+		"title": "Use Y", "content": "we use Y now", "type": "decision",
+	})
+	var s2 map[string]any
+	_ = json.Unmarshal([]byte(toolResultText(t, r2)), &s2)
+	id2 := s2["id"].(string)
+
+	// Link them — supersedes should invalidate the old one.
+	toolCall(t, srv, "mnemos_link", map[string]any{
+		"source_id": id2, "target_id": id1, "link_type": "supersedes",
+	})
+
+	// Default search should no longer return the old one.
+	sResp := toolCall(t, srv, "mnemos_search", map[string]any{"query": "use"})
+	body := toolResultText(t, sResp)
+	if strings.Contains(body, id1) {
+		t.Errorf("superseded observation should be hidden from default search")
+	}
+
+	// Correct with structured fields.
+	corrResp := toolCall(t, srv, "mnemos_correct", map[string]any{
+		"title":         "oauth retry was wrong",
+		"tried":         "retry immediately on 401",
+		"wrong_because": "401 is auth failure, not transient",
+		"fix":           "refresh token, then retry once",
+		"project":       "mnemos",
+	})
+	var corr map[string]any
+	_ = json.Unmarshal([]byte(toolResultText(t, corrResp)), &corr)
+	if corr["id"] == nil {
+		t.Error("correction should return an id")
+	}
+}
+
+func TestCompactionRecoveryMode(t *testing.T) {
+	srv := newTestServer(t)
+
+	startResp := toolCall(t, srv, "mnemos_session_start", map[string]any{
+		"project": "mnemos",
+		"goal":    "finish prewarm",
+	})
+	var started map[string]any
+	_ = json.Unmarshal([]byte(toolResultText(t, startResp)), &started)
+	sessID := started["session_id"].(string)
+
+	toolCall(t, srv, "mnemos_save", map[string]any{
+		"title":      "decided push > pull",
+		"content":    "session_start returns prewarm block",
+		"type":       "decision",
+		"session_id": sessID,
+		"project":    "mnemos",
+	})
+
+	recResp := toolCall(t, srv, "mnemos_context", map[string]any{
+		"mode":       "recovery",
+		"session_id": sessID,
+		"project":    "mnemos",
+	})
+	text := toolResultText(t, recResp)
+	if !strings.Contains(text, "finish prewarm") {
+		t.Errorf("recovery must include session goal, got: %s", text)
+	}
+	if !strings.Contains(text, "decided push") {
+		t.Errorf("recovery must include in-session observation, got: %s", text)
 	}
 }
 

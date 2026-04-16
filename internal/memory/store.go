@@ -49,4 +49,33 @@ type Store interface {
 	// DecayImportance reduces importance of observations untouched for more
 	// than staleDays by the given amount (floor 1). Returns rows affected.
 	DecayImportance(ctx context.Context, staleDays int, amount int) (int64, error)
+
+	// FindByContentHash looks up an existing observation with identical
+	// content in the same (agent, project) scope. Drives dedup-on-save.
+	// Returns nil, nil when no duplicate exists.
+	FindByContentHash(ctx context.Context, agentID, project, hash string) (*Observation, error)
+
+	// BumpAccess increments access_count and sets last_accessed_at without
+	// returning the row. Used by dedup to register a re-save as a hit.
+	BumpAccess(ctx context.Context, id string) error
+
+	// ListByProject returns live observations in a project, optionally
+	// filtered by type, ordered by recency. Used by pre-warm.
+	ListByProject(ctx context.Context, agentID, project string, obsType ObsType, limit int) ([]Observation, error)
+
+	// UpdateEmbedding writes an embedding + model ID for an observation.
+	UpdateEmbedding(ctx context.Context, id string, model string, vec []float32) error
+
+	// ListMissingEmbeddings returns observations with no embedding yet
+	// (for backfill).
+	ListMissingEmbeddings(ctx context.Context, limit int) ([]Observation, error)
+
+	// MarkExported updates last_exported_at for vault sync tracking.
+	MarkExported(ctx context.Context, id string, at time.Time) error
+}
+
+// TouchStore persists file-touch events (file heat map).
+type TouchStore interface {
+	Record(ctx context.Context, in TouchInput) error
+	Hot(ctx context.Context, agentID, project string, limit int) ([]HotFile, error)
 }

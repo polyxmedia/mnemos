@@ -21,14 +21,25 @@ const (
 	TypeEpisodic     ObsType = "episodic"
 	TypeSemantic     ObsType = "semantic"
 	TypeProcedural   ObsType = "procedural"
+	TypeCorrection   ObsType = "correction"
+	TypeConvention   ObsType = "convention"
+	TypeDream        ObsType = "dream"
 )
+
+// AllTypes is the canonical list of recognised observation types, in the
+// order they appear in agent-facing documentation.
+var AllTypes = []ObsType{
+	TypeDecision, TypeBugfix, TypePattern, TypePreference, TypeContext,
+	TypeArchitecture, TypeEpisodic, TypeSemantic, TypeProcedural,
+	TypeCorrection, TypeConvention, TypeDream,
+}
 
 // Valid reports whether t is a recognised observation type.
 func (t ObsType) Valid() bool {
-	switch t {
-	case TypeDecision, TypeBugfix, TypePattern, TypePreference,
-		TypeContext, TypeArchitecture, TypeEpisodic, TypeSemantic, TypeProcedural:
-		return true
+	for _, known := range AllTypes {
+		if t == known {
+			return true
+		}
 	}
 	return false
 }
@@ -81,6 +92,30 @@ type Observation struct {
 	ValidUntil     *time.Time
 	InvalidatedAt  *time.Time
 	ExpiresAt      *time.Time
+
+	// ContentHash is the SHA-256 of normalised content. Used for dedup on
+	// save: identical content in the same (agent, project) scope bumps the
+	// existing observation's access count instead of creating a duplicate.
+	ContentHash string
+
+	// Structured holds type-specific fields as JSON (e.g. corrections carry
+	// tried/wrong_because/fix). Empty for types that only need the free-text
+	// content field.
+	Structured string
+
+	// Rationale is the WHY for decisions, conventions, and architecture
+	// observations. Separate from content so the rationale can be surfaced
+	// specifically in pre-warm blocks without inflating context.
+	Rationale string
+
+	// Embedding is the model-generated vector for this observation. Nil when
+	// embeddings are disabled. Stored as BLOB on disk.
+	Embedding      []float32
+	EmbeddingModel string
+
+	// LastExportedAt tracks when this observation was written to the
+	// Obsidian vault. NULL means never exported.
+	LastExportedAt *time.Time
 }
 
 // Live reports whether the observation is currently valid at t.
@@ -111,6 +146,20 @@ type SaveInput struct {
 	ValidFrom  *time.Time
 	ValidUntil *time.Time
 	TTLDays    int
+
+	// Structured fields for type-specific data (e.g. correction.tried).
+	// JSON-encoded object; keys are type-specific.
+	Structured string
+
+	// Rationale for decisions/conventions/architecture.
+	Rationale string
+}
+
+// SaveResult is the outcome of Save: the resulting observation plus whether
+// this was a dedup (existing row was reused) or a fresh insert.
+type SaveResult struct {
+	Observation *Observation
+	Deduped     bool // true when the content already existed; AccessCount bumped instead of inserting
 }
 
 // SearchInput parameterises a search query. Query is the BM25 pattern; filters
@@ -177,4 +226,32 @@ type RecentSession struct {
 	Goal      string
 	StartedAt time.Time
 	EndedAt   *time.Time
+}
+
+// FileTouch records that an agent touched a file during a session.
+type FileTouch struct {
+	Project   string
+	AgentID   string
+	Path      string
+	SessionID string
+	Note      string
+	TouchedAt time.Time
+}
+
+// TouchInput is the write-side payload for recording a file touch.
+type TouchInput struct {
+	Project   string
+	AgentID   string
+	Path      string
+	SessionID string
+	Note      string
+}
+
+// HotFile aggregates touches for a (project, path) pair.
+type HotFile struct {
+	Project     string
+	AgentID     string
+	Path        string
+	TouchCount  int
+	LastTouched time.Time
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
@@ -29,12 +30,16 @@ func (s *Server) registerTools() {
 		s.toolSearch(),
 		s.toolGet(),
 		s.toolDelete(),
+		s.toolLink(),
 		s.toolSessionStart(),
 		s.toolSessionEnd(),
 		s.toolContext(),
 		s.toolSkillMatch(),
 		s.toolSkillSave(),
 		s.toolStats(),
+		s.toolCorrect(),
+		s.toolConvention(),
+		s.toolTouch(),
 	}
 	s.handlers = make(map[string]toolHandler, len(defs))
 	s.toolOrder = make([]string, 0, len(defs))
@@ -143,15 +148,16 @@ func (s *Server) toolSave() toolDef {
 				in.ValidUntil = t
 			}
 
-			o, err := s.mem.Save(ctx, in)
+			res, err := s.mem.Save(ctx, in)
 			if err != nil {
 				return nil, err
 			}
 			return jsonResult(map[string]any{
-				"id":         o.ID,
-				"title":      o.Title,
-				"type":       string(o.Type),
-				"created_at": o.CreatedAt,
+				"id":         res.Observation.ID,
+				"title":      res.Observation.Title,
+				"type":       string(res.Observation.Type),
+				"created_at": res.Observation.CreatedAt,
+				"deduped":    res.Deduped,
 			})
 		},
 	}
@@ -321,10 +327,28 @@ func (s *Server) toolSessionStart() toolDef {
 			if err != nil {
 				return nil, err
 			}
-			return jsonResult(map[string]any{
+			// Push context upfront — this is the whole point of pre-warming.
+			// The agent gets conventions, recent sessions, matching skills,
+			// corrections, and hot files in one call, without having to ask.
+			out := map[string]any{
 				"session_id": sess.ID,
 				"started_at": sess.StartedAt,
-			})
+			}
+			if block := s.buildPrewarm(ctx, prewarm.Request{
+				Mode:      prewarm.ModeSessionStart,
+				AgentID:   a.AgentID,
+				Project:   a.Project,
+				Goal:      a.Goal,
+				SessionID: sess.ID,
+			}); block != nil && block.Text != "" {
+				out["prewarm"] = map[string]any{
+					"text":           block.Text,
+					"token_estimate": block.TokenEstimate,
+					"section_count":  len(block.Sections),
+					"safety_risk":    block.SafetyReport.MaxRisk.String(),
+				}
+			}
+			return jsonResult(out)
 		},
 	}
 }
@@ -332,23 +356,30 @@ func (s *Server) toolSessionStart() toolDef {
 // ---- mnemos_session_end ----
 
 type sessionEndArgs struct {
-	SessionID  string `json:"session_id"`
-	Summary    string `json:"summary"`
-	Reflection string `json:"reflection,omitempty"`
+	SessionID   string   `json:"session_id"`
+	Summary     string   `json:"summary"`
+	Reflection  string   `json:"reflection,omitempty"`
+	Status      string   `json:"status,omitempty"`
+	OutcomeTags []string `json:"outcome_tags,omitempty"`
 }
 
 func (s *Server) toolSessionEnd() toolDef {
 	return toolDef{
 		tool: Tool{
 			Name: "mnemos_session_end",
-			Description: "Close a session with summary and optional reflection. Reflection is the agent-authored extraction of transferable lessons — this is what gets promoted into skills during consolidation.",
+			Description: "Close a session with summary, status, and optional reflection. " +
+				"Reflection captures transferable lessons. Status (ok|failed|blocked|abandoned) " +
+				"flags the session outcome — observations from failed sessions get a ranking boost " +
+				"so agents learn from what went wrong.",
 			InputSchema: mustSchema(`{
 			"type":"object",
 			"required":["session_id","summary"],
 			"properties":{
-				"session_id":{"type":"string"},
-				"summary":   {"type":"string","description":"what shipped, what broke, what was learned"},
-				"reflection":{"type":"string","description":"transferable lessons: patterns, sequences, pitfalls"}
+				"session_id":   {"type":"string"},
+				"summary":      {"type":"string","description":"what shipped, what broke, what was learned"},
+				"reflection":   {"type":"string","description":"transferable lessons: patterns, sequences, pitfalls"},
+				"status":       {"type":"string","enum":["ok","failed","blocked","abandoned"],"description":"defaults to 'ok'"},
+				"outcome_tags": {"type":"array","items":{"type":"string"},"description":"short tags characterising the outcome"}
 			}
 		}`),
 		},
@@ -357,12 +388,20 @@ func (s *Server) toolSessionEnd() toolDef {
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return nil, err
 			}
+			status := session.Status(a.Status)
+			if status == "" {
+				status = session.StatusOK
+			}
 			if err := s.sess.Close(ctx, session.CloseInput{
-				ID: a.SessionID, Summary: a.Summary, Reflection: a.Reflection,
+				ID:          a.SessionID,
+				Summary:     a.Summary,
+				Reflection:  a.Reflection,
+				Status:      status,
+				OutcomeTags: a.OutcomeTags,
 			}); err != nil {
 				return nil, err
 			}
-			return textResult("session " + a.SessionID + " closed")
+			return textResult("session " + a.SessionID + " closed (" + string(status) + ")")
 		},
 	}
 }
@@ -370,25 +409,33 @@ func (s *Server) toolSessionEnd() toolDef {
 // ---- mnemos_context ----
 
 type contextArgs struct {
-	Query     string `json:"query"`
+	Query     string `json:"query,omitempty"`
+	Mode      string `json:"mode,omitempty"` // "" (default) | "recovery"
 	MaxTokens int    `json:"max_tokens,omitempty"`
 	AgentID   string `json:"agent_id,omitempty"`
 	Project   string `json:"project,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Goal      string `json:"goal,omitempty"`
 }
 
 func (s *Server) toolContext() toolDef {
 	return toolDef{
 		tool: Tool{
 			Name: "mnemos_context",
-			Description: "Return a token-budgeted block of relevant memory ready for injection. Safer than search+get loops: the block never exceeds max_tokens (default 2000).",
+			Description: "Return a token-budgeted block of relevant memory. Two modes: " +
+				"default (query-based search-and-pack) and 'recovery' (compaction recovery: " +
+				"restores current session goal, in-session observations, and conventions after " +
+				"the agent's context was compacted). Budget defaults to 2000 tokens (500 for recovery).",
 			InputSchema: mustSchema(`{
 			"type":"object",
-			"required":["query"],
 			"properties":{
-				"query":     {"type":"string"},
-				"max_tokens":{"type":"integer","minimum":100,"maximum":20000},
-				"agent_id":  {"type":"string"},
-				"project":   {"type":"string"}
+				"query":      {"type":"string","description":"search query for default mode"},
+				"mode":       {"type":"string","enum":["","recovery"],"description":"'recovery' restores session state after compaction"},
+				"max_tokens": {"type":"integer","minimum":100,"maximum":20000},
+				"agent_id":   {"type":"string"},
+				"project":    {"type":"string"},
+				"session_id": {"type":"string","description":"required for recovery mode"},
+				"goal":       {"type":"string","description":"optional: improves matching"}
 			}
 		}`),
 		},
@@ -396,6 +443,32 @@ func (s *Server) toolContext() toolDef {
 			var a contextArgs
 			if err := json.Unmarshal(raw, &a); err != nil {
 				return nil, err
+			}
+			if a.Mode == "recovery" {
+				if a.SessionID == "" {
+					return nil, fmt.Errorf("recovery mode requires session_id")
+				}
+				block := s.buildPrewarm(ctx, prewarm.Request{
+					Mode:      prewarm.ModeCompactionRecovery,
+					AgentID:   a.AgentID,
+					Project:   a.Project,
+					SessionID: a.SessionID,
+					Goal:      a.Goal,
+					MaxTokens: a.MaxTokens,
+				})
+				if block == nil {
+					return nil, fmt.Errorf("recovery unavailable: prewarm service not wired")
+				}
+				return jsonResult(map[string]any{
+					"mode":           "recovery",
+					"text":           block.Text,
+					"token_estimate": block.TokenEstimate,
+					"section_count":  len(block.Sections),
+					"safety_risk":    block.SafetyReport.MaxRisk.String(),
+				})
+			}
+			if a.Query == "" {
+				return nil, fmt.Errorf("query is required when mode != 'recovery'")
 			}
 			block, err := s.mem.Context(ctx, memory.ContextInput{
 				Query: a.Query, MaxTokens: a.MaxTokens,
@@ -405,9 +478,9 @@ func (s *Server) toolContext() toolDef {
 				return nil, err
 			}
 			return jsonResult(map[string]any{
-				"text":            block.Text,
-				"token_estimate":  block.TokenEstimate,
-				"observations":    summariseObs(block.Observations),
+				"text":           block.Text,
+				"token_estimate": block.TokenEstimate,
+				"observations":   summariseObs(block.Observations),
 			})
 		},
 	}

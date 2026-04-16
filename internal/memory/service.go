@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -44,9 +46,10 @@ func NewService(cfg Config) *Service {
 	}
 }
 
-// Save creates a new observation from agent-provided input. ID is a ULID so
-// results sort naturally by time, and timestamps default to now.
-func (s *Service) Save(ctx context.Context, in SaveInput) (*Observation, error) {
+// Save creates a new observation from agent-provided input, or bumps the
+// access counter on an existing identical one (dedup-on-save). Returns
+// SaveResult so callers can distinguish a fresh insert from a dedup hit.
+func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	if strings.TrimSpace(in.Title) == "" {
 		return nil, fmt.Errorf("save: title is required")
 	}
@@ -69,19 +72,37 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*Observation, error) 
 		validFrom = in.ValidFrom.UTC()
 	}
 
+	agent := defaultString(in.AgentID, "default")
+	hash := hashContent(in.Type, in.Title, in.Content, in.Rationale, in.Structured)
+
+	// Dedup: if the same (agent, project, content_hash) already lives, bump
+	// access and return without writing. Invalidated rows don't count — a
+	// re-save can legitimately resurrect a superseded fact.
+	if existing, err := s.store.FindByContentHash(ctx, agent, in.Project, hash); err != nil {
+		return nil, fmt.Errorf("dedup lookup: %w", err)
+	} else if existing != nil {
+		if err := s.store.BumpAccess(ctx, existing.ID); err != nil {
+			return nil, err
+		}
+		return &SaveResult{Observation: existing, Deduped: true}, nil
+	}
+
 	o := &Observation{
-		ID:         ulid.Make().String(),
-		SessionID:  in.SessionID,
-		AgentID:    defaultString(in.AgentID, "default"),
-		Project:    in.Project,
-		Title:      in.Title,
-		Content:    in.Content,
-		Type:       in.Type,
-		Tags:       in.Tags,
-		Importance: in.Importance,
-		CreatedAt:  now,
-		ValidFrom:  validFrom,
-		ValidUntil: in.ValidUntil,
+		ID:          ulid.Make().String(),
+		SessionID:   in.SessionID,
+		AgentID:     agent,
+		Project:     in.Project,
+		Title:       in.Title,
+		Content:     in.Content,
+		Type:        in.Type,
+		Tags:        in.Tags,
+		Importance:  in.Importance,
+		CreatedAt:   now,
+		ValidFrom:   validFrom,
+		ValidUntil:  in.ValidUntil,
+		ContentHash: hash,
+		Structured:  in.Structured,
+		Rationale:   in.Rationale,
 	}
 	if in.TTLDays > 0 {
 		t := now.AddDate(0, 0, in.TTLDays)
@@ -91,7 +112,21 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*Observation, error) 
 	if err := s.store.Insert(ctx, o); err != nil {
 		return nil, err
 	}
-	return o, nil
+	return &SaveResult{Observation: o, Deduped: false}, nil
+}
+
+// hashContent produces a stable SHA-256 hex digest over the identity-
+// defining fields of an observation. Normalised (whitespace trimmed) so
+// trivial formatting differences still dedup.
+func hashContent(t ObsType, parts ...string) string {
+	h := sha256.New()
+	h.Write([]byte(t))
+	h.Write([]byte{0})
+	for _, p := range parts {
+		h.Write([]byte(strings.TrimSpace(p)))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Get returns the full observation (also bumps access count via the store).

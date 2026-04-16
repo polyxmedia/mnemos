@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
@@ -23,6 +24,8 @@ type Server struct {
 	mem     *memory.Service
 	sess    *session.Service
 	skill   *skills.Service
+	touches memory.TouchStore
+	prewarm *prewarm.Service
 	log     *slog.Logger
 
 	mu              sync.Mutex // serialises stdout writes
@@ -38,6 +41,8 @@ type Config struct {
 	Memory   *memory.Service
 	Sessions *session.Service
 	Skills   *skills.Service
+	Touches  memory.TouchStore
+	Prewarm  *prewarm.Service
 	Logger   *slog.Logger
 }
 
@@ -58,6 +63,8 @@ func NewServer(cfg Config) *Server {
 		mem:     cfg.Memory,
 		sess:    cfg.Sessions,
 		skill:   cfg.Skills,
+		touches: cfg.Touches,
+		prewarm: cfg.Prewarm,
 		log:     cfg.Logger,
 	}
 	s.registerTools()

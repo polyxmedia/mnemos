@@ -2,6 +2,7 @@ package memory_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestSaveValidation(t *testing.T) {
 func TestSaveGetRoundTrip(t *testing.T) {
 	svc := newService(t, nil)
 	ctx := context.Background()
-	o, err := svc.Save(ctx, memory.SaveInput{
+	res, err := svc.Save(ctx, memory.SaveInput{
 		Title:      "Use WAL",
 		Content:    "Enable WAL for concurrent readers.",
 		Type:       memory.TypePattern,
@@ -54,12 +55,49 @@ func TestSaveGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.Get(ctx, o.ID)
+	if res.Deduped {
+		t.Fatal("first save should not dedup")
+	}
+	got, err := svc.Get(ctx, res.Observation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Content != o.Content {
+	if got.Content != res.Observation.Content {
 		t.Errorf("round trip content mismatch")
+	}
+}
+
+func TestSaveDedupsIdenticalContent(t *testing.T) {
+	svc := newService(t, nil)
+	ctx := context.Background()
+
+	first, err := svc.Save(ctx, memory.SaveInput{
+		Title:   "Same",
+		Content: "identical body",
+		Type:    memory.TypePattern,
+		Project: "proj",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.Save(ctx, memory.SaveInput{
+		Title:   "Same",
+		Content: "identical body",
+		Type:    memory.TypePattern,
+		Project: "proj",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Deduped {
+		t.Error("second identical save should dedup")
+	}
+	if second.Observation.ID != first.Observation.ID {
+		t.Error("dedup must return the existing ID")
+	}
+	got, _ := svc.Get(ctx, first.Observation.ID)
+	if got.AccessCount < 1 {
+		t.Error("dedup should bump access count")
 	}
 }
 
@@ -67,13 +105,13 @@ func TestSupersedeInvalidatesAndLinks(t *testing.T) {
 	svc := newService(t, nil)
 	ctx := context.Background()
 
-	oldO, _ := svc.Save(ctx, memory.SaveInput{
+	oldRes, _ := svc.Save(ctx, memory.SaveInput{
 		Title: "Use X", Content: "we use X", Type: memory.TypeDecision, Importance: 5,
 	})
-	newO, _ := svc.Save(ctx, memory.SaveInput{
+	newRes, _ := svc.Save(ctx, memory.SaveInput{
 		Title: "Use Y", Content: "we use Y now", Type: memory.TypeDecision, Importance: 7,
 	})
-	if err := svc.Supersede(ctx, newO.ID, oldO.ID); err != nil {
+	if err := svc.Supersede(ctx, newRes.Observation.ID, oldRes.Observation.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +120,7 @@ func TestSupersedeInvalidatesAndLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range results {
-		if r.Observation.ID == oldO.ID {
+		if r.Observation.ID == oldRes.Observation.ID {
 			t.Error("old superseded observation should be excluded from default search")
 		}
 	}
@@ -96,16 +134,16 @@ func TestRankingPrefersImportantAndRecent(t *testing.T) {
 	old := time.Now().Add(-60 * 24 * time.Hour).UTC()
 	// Trick: we can't backdate via SaveInput, but the ranker uses CreatedAt
 	// pulled from the store. For this test we only vary importance.
-	low, _ := svc.Save(ctx, memory.SaveInput{
+	lowRes, _ := svc.Save(ctx, memory.SaveInput{
 		Title: "Pattern A", Content: "pattern about sqlite indexing",
 		Type: memory.TypePattern, Importance: 3,
 	})
-	high, _ := svc.Save(ctx, memory.SaveInput{
+	highRes, _ := svc.Save(ctx, memory.SaveInput{
 		Title: "Pattern B", Content: "pattern about sqlite indexing",
 		Type: memory.TypePattern, Importance: 10,
 	})
 	_ = old
-	_ = low
+	_ = lowRes
 
 	results, err := svc.Search(ctx, memory.SearchInput{Query: "sqlite indexing"})
 	if err != nil {
@@ -114,7 +152,7 @@ func TestRankingPrefersImportantAndRecent(t *testing.T) {
 	if len(results) < 2 {
 		t.Fatalf("want 2+ results, got %d", len(results))
 	}
-	if results[0].Observation.ID != high.ID {
+	if results[0].Observation.ID != highRes.Observation.ID {
 		t.Errorf("expected high-importance observation first, got %s", results[0].Observation.Title)
 	}
 }
@@ -125,8 +163,8 @@ func TestContextRespectsTokenBudget(t *testing.T) {
 
 	for i := 0; i < 50; i++ {
 		_, err := svc.Save(ctx, memory.SaveInput{
-			Title:      "Entry",
-			Content:    "some content about sqlite indexing and FTS5 search ranking behaviour",
+			Title:      fmt.Sprintf("Entry %d", i),
+			Content:    fmt.Sprintf("content %d about sqlite indexing and FTS5 search ranking", i),
 			Type:       memory.TypePattern,
 			Importance: 5,
 		})

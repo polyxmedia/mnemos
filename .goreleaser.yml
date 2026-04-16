@@ -1,0 +1,95 @@
+version: 2
+
+project_name: mnemos
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./... -race
+
+builds:
+  - id: mnemos
+    main: ./cmd/mnemos
+    binary: mnemos
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/polyxmedia/mnemos/internal/version.Version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: mnemos
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: polyxmedia
+    name: mnemos
+  name_template: "v{{.Version}}"
+  prerelease: auto
+  draft: false
+
+brews:
+  - name: mnemos
+    repository:
+      owner: polyxmedia
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/polyxmedia/mnemos"
+    description: "Persistent memory and skills for AI coding agents — MCP-native, single binary, zero deps."
+    license: "MIT"
+    test: |
+      system "#{bin}/mnemos version"
+    install: |
+      bin.install "mnemos"
