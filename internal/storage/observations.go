@@ -104,12 +104,15 @@ func (s *obsStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *obsStore) Invalidate(ctx context.Context, id string, validUntil time.Time) error {
+	// Explicit Go-side timestamp preserves sub-second precision — important
+	// for bi-temporal queries and replay filtering.
+	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE observations
 		   SET valid_until    = COALESCE(valid_until, ?),
-		       invalidated_at = CURRENT_TIMESTAMP
+		       invalidated_at = ?
 		 WHERE id = ? AND invalidated_at IS NULL`,
-		validUntil.UTC(), id)
+		validUntil.UTC(), now, id)
 	if err != nil {
 		return fmt.Errorf("invalidate: %w", err)
 	}
@@ -308,6 +311,19 @@ func (s *obsStore) FindByContentHash(ctx context.Context, agentID, project, hash
 		return nil, err
 	}
 	return o, nil
+}
+
+func (s *obsStore) ListBySession(ctx context.Context, sessionID string) ([]memory.Observation, error) {
+	// Returns ALL observations for a session, including invalidated ones.
+	// Replay needs this so it can flag which session-observations were
+	// superseded after the fact.
+	rows, err := s.db.QueryContext(ctx,
+		selectObsSQL+` WHERE session_id = ? ORDER BY created_at ASC`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list by session: %w", err)
+	}
+	defer rows.Close()
+	return scanObsList(rows)
 }
 
 func (s *obsStore) ListByProject(ctx context.Context, agentID, project string, obsType memory.ObsType, limit int) ([]memory.Observation, error) {

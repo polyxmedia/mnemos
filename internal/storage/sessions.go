@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/polyxmedia/mnemos/internal/session"
 )
@@ -60,16 +61,20 @@ func (s *sessStore) Close(ctx context.Context, in session.CloseInput) error {
 	if err != nil {
 		return fmt.Errorf("marshal outcome_tags: %w", err)
 	}
+	// We pass ended_at explicitly (Go-side time) rather than using
+	// CURRENT_TIMESTAMP so the stored value keeps sub-second precision.
+	// Features like replay-since-session-end compare timestamps at ms
+	// granularity; a whole-second floor would merge nearby events.
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE sessions
 		   SET summary      = ?,
 		       reflection   = ?,
 		       status       = ?,
 		       outcome_tags = ?,
-		       ended_at     = CURRENT_TIMESTAMP
+		       ended_at     = ?
 		 WHERE id = ? AND ended_at IS NULL`,
 		nullableStr(in.Summary), nullableStr(in.Reflection),
-		string(status), string(tags), in.ID)
+		string(status), string(tags), time.Now().UTC(), in.ID)
 	if err != nil {
 		return fmt.Errorf("close session: %w", err)
 	}

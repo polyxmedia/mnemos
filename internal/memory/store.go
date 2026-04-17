@@ -23,6 +23,7 @@ type Reader interface {
 	Get(ctx context.Context, id string) (*Observation, error)
 	Search(ctx context.Context, in SearchInput) ([]SearchResult, error)
 	ListByProject(ctx context.Context, agentID, project string, obsType ObsType, limit int) ([]Observation, error)
+	ListBySession(ctx context.Context, sessionID string) ([]Observation, error)
 	ListByTitleSimilarity(ctx context.Context, agentID, title string, limit int) ([]Observation, error)
 	FindByContentHash(ctx context.Context, agentID, project, hash string) (*Observation, error)
 	Stats(ctx context.Context) (Stats, error)

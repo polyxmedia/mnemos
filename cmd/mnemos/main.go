@@ -51,6 +51,7 @@ var commands = map[string]handler{
 	"vault":     runVault,
 	"embed":     runEmbed,
 	"skill":     runSkill,
+	"replay":    runReplay,
 	"version":   runVersion,
 	"config":    runConfig,
 	"init":      runInit,
@@ -95,6 +96,7 @@ Commands:
   skill list             Show installed skills
   skill export [names]   Build a shareable pack (stdout or --out file)
   skill import <src>     Import a pack from a file path or https URL
+  replay <session_id>    Markdown recap of a prior session + what you've learned since
   init                   Register mnemos with Claude Code / Cursor / Windsurf
   doctor                 Check installation health
   config                 Print the current configuration

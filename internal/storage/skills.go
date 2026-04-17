@@ -51,15 +51,21 @@ func (s *skillStore) Upsert(ctx context.Context, in skills.SaveInput) (*skills.S
 		`SELECT id, version FROM skills WHERE agent_id = ? AND name = ?`,
 		agent, in.Name).Scan(&existingID, &existingVersion)
 
+	// Pass timestamps explicitly so we keep sub-second precision — important
+	// for features like replay that filter "since session X ended".
+	now := time.Now().UTC()
+
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		id := ulid.Make().String()
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO skills (id, agent_id, name, description, procedure,
-			                    pitfalls, tags, source_sessions, version)
-			VALUES (?,?,?,?,?,?,?,?,1)`,
+			                    pitfalls, tags, source_sessions, version,
+			                    created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,1,?,?)`,
 			id, agent, in.Name, in.Description, in.Procedure,
-			nullableStr(in.Pitfalls), string(tags), string(sources)); err != nil {
+			nullableStr(in.Pitfalls), string(tags), string(sources),
+			now, now); err != nil {
 			return nil, fmt.Errorf("insert skill: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -77,10 +83,10 @@ func (s *skillStore) Upsert(ctx context.Context, in skills.SaveInput) (*skills.S
 				tags            = ?,
 				source_sessions = ?,
 				version         = ?,
-				updated_at      = CURRENT_TIMESTAMP
+				updated_at      = ?
 			WHERE id = ?`,
 			in.Description, in.Procedure, nullableStr(in.Pitfalls),
-			string(tags), string(sources), existingVersion+1, existingID); err != nil {
+			string(tags), string(sources), existingVersion+1, now, existingID); err != nil {
 			return nil, fmt.Errorf("update skill: %w", err)
 		}
 		if err := tx.Commit(); err != nil {

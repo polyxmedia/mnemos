@@ -181,6 +181,7 @@ Based on public documentation as of April 2026. If anything's wrong, [open an is
 - **Structured correction journal** — `tried / wrong_because / fix` as a first-class observation type with retrieval boosting.
 - **Prompt-injection scanner at the injection boundary** — flags instruction-override / role-spoof / zero-width-unicode patterns before content reaches the agent.
 - **Portable skill packs** — export any skill (or all of them) as a JSON pack, share via file or URL, `mnemos skill import https://...` installs it in one command. Runtime stats are stripped, pack versioning is strict. Turns procedural memory into a social layer.
+- **Session replay** — `mnemos replay <session_id>` generates a markdown recap of a past session *with everything learned since* (corrections recorded after, conventions added after, skills promoted after, and observations from the session that have been superseded). Paste it back into your agent and ask "what would you do differently now?" — a retrospective-self-improvement loop nobody else has.
 - **Obsidian vault export** — full markdown graph with wikilinks.
 
 **What others do better than us:**
@@ -211,6 +212,7 @@ Based on public documentation as of April 2026. If anything's wrong, [open an is
 | `mnemos skill list` | Show installed skills |
 | `mnemos skill export [names...] [--out file]` | Build a shareable skill pack |
 | `mnemos skill import <file-or-url>` | Install a pack from disk or an `https://` URL |
+| `mnemos replay <session_id>` | Markdown recap of a past session + what you've learned since |
 | `mnemos config` | Print current config |
 | `mnemos version` | Print version |
 
