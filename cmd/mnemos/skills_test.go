@@ -138,4 +138,3 @@ func TestSkillUnknownSubcommand(t *testing.T) {
 		t.Error("empty args must error")
 	}
 }
-

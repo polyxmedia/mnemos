@@ -89,9 +89,9 @@ func TestReplaySurfacesCorrectionsAddedAfter(t *testing.T) {
 	time.Sleep(25 * time.Millisecond)
 
 	_, _ = mem.Save(ctx, memory.SaveInput{
-		Title: "oauth retry was wrong",
+		Title:   "oauth retry was wrong",
 		Content: "**Tried:** retry on 401\n**Wrong because:** 401 is auth not transient\n**Fix:** refresh then retry",
-		Type: memory.TypeCorrection, Project: "proj", Importance: 8,
+		Type:    memory.TypeCorrection, Project: "proj", Importance: 8,
 	})
 
 	block, err := rp.Build(ctx, replay.Request{SessionID: s.ID})
@@ -137,9 +137,9 @@ func TestReplaySurfacesNewSkills(t *testing.T) {
 
 	time.Sleep(25 * time.Millisecond)
 	_, _ = skl.Save(ctx, skills.SaveInput{
-		Name: "oauth-retry-properly",
+		Name:        "oauth-retry-properly",
 		Description: "refresh then retry once",
-		Procedure: "1. refresh\n2. retry",
+		Procedure:   "1. refresh\n2. retry",
 	})
 
 	block, err := rp.Build(ctx, replay.Request{SessionID: s.ID})

@@ -11,13 +11,16 @@ import (
 	"testing"
 )
 
-// withHome sets $HOME for the duration of the test so loadServices picks
-// up an isolated config + db.
+// withHome sets the process-wide home directory for the duration of
+// the test so loadDeps picks up an isolated config + DB. Go's
+// os.UserHomeDir consults $HOME on unix and %USERPROFILE% on Windows —
+// we set both so tests are portable. t.Setenv handles restore on
+// cleanup automatically.
 func withHome(t *testing.T) {
 	t.Helper()
-	old := os.Getenv("HOME")
-	t.Cleanup(func() { _ = os.Setenv("HOME", old) })
-	_ = os.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }
 
 // captureStdout runs fn with os.Stdout redirected to a buffer, returns

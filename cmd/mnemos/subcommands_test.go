@@ -13,12 +13,15 @@ import (
 	"github.com/polyxmedia/mnemos/internal/config"
 )
 
-// homeWithConfig prepares an isolated $HOME and writes a config file that
-// points at the given embedding provider + base_url. Returns the home dir.
+// homeWithConfig prepares an isolated home directory and writes a config
+// file that points at the given embedding provider + base_url. Returns
+// the home dir. Sets both HOME (unix) and USERPROFILE (windows) so tests
+// are portable — os.UserHomeDir consults each depending on GOOS.
 func homeWithConfig(t *testing.T, embedConfig string) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	cfgDir := filepath.Join(home, ".mnemos")
 	_ = os.MkdirAll(cfgDir, 0o755)
 	if embedConfig != "" {

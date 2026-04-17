@@ -65,21 +65,21 @@ type Request struct {
 
 // Block is the composed replay payload.
 type Block struct {
-	Text          string
-	TokenEstimate int
-	Session       *session.Session
-	Observations  []memory.Observation
+	Text           string
+	TokenEstimate  int
+	Session        *session.Session
+	Observations   []memory.Observation
 	NewConventions []memory.Observation
 	NewCorrections []memory.Observation
-	NewSkills     []skills.Skill
-	Superseded    []Superseded
+	NewSkills      []skills.Skill
+	Superseded     []Superseded
 }
 
 // Superseded records one of the session's observations that has been
 // invalidated since the session ran — the most interesting thing to
 // surface because the agent was operating on now-stale facts.
 type Superseded struct {
-	Original memory.Observation
+	Original   memory.Observation
 	ReplacedBy *memory.Observation // nil if just invalidated (no replacement link)
 }
 
