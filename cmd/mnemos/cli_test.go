@@ -21,6 +21,9 @@ func withHome(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
+	// Ensure Claude Code's config-dir override doesn't leak from the host
+	// environment and redirect installer targets outside the temp HOME.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 }
 
 // captureStdout runs fn with os.Stdout redirected to a buffer, returns

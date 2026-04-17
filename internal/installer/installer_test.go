@@ -81,6 +81,32 @@ func TestInstallPreservesOtherServers(t *testing.T) {
 	}
 }
 
+func TestDetectTargetsHonoursClaudeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	cfgDir := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+
+	// Put a .claude.json in the override dir; leave $HOME empty. The
+	// installer must target the override, otherwise mnemos gets wired into
+	// ~/.claude.json while the running agent reads from CLAUDE_CONFIG_DIR.
+	if err := os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var got string
+	for _, tgt := range installer.DetectTargets() {
+		if tgt.Name == "Claude Code (user)" {
+			got = tgt.Path
+		}
+	}
+	want := filepath.Join(cfgDir, ".claude.json")
+	if got != want {
+		t.Errorf("Claude Code target path = %q, want %q", got, want)
+	}
+}
+
 func TestUninstallRemovesEntry(t *testing.T) {
 	dir := t.TempDir()
 	target := installer.Target{

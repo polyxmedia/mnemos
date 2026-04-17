@@ -48,7 +48,7 @@ func DetectTargets() []Target {
 		return nil
 	}
 	candidates := []Target{
-		{Name: "Claude Code (user)", Path: filepath.Join(home, ".claude.json"), Key: "mnemos"},
+		{Name: "Claude Code (user)", Path: filepath.Join(claudeConfigDir(home), ".claude.json"), Key: "mnemos"},
 		{Name: "Cursor", Path: filepath.Join(home, ".cursor", "mcp.json"), Key: "mnemos"},
 		{Name: "Windsurf", Path: filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"), Key: "mnemos"},
 		{Name: "OpenAI Codex CLI", Path: filepath.Join(home, ".codex", "config.toml"), Group: "mcp_servers", Key: "mnemos", Format: FormatTOML},
@@ -70,6 +70,19 @@ func DetectTargets() []Target {
 		}
 	}
 	return out
+}
+
+// claudeConfigDir returns the directory that hosts Claude Code's user-scope
+// config (the one containing .claude.json). Claude Code honours the
+// CLAUDE_CONFIG_DIR env var to relocate this dir; when unset, it falls back
+// to $HOME. The installer must mirror that, otherwise mnemos gets wired into
+// ~/.claude.json while the running agent reads from $CLAUDE_CONFIG_DIR
+// and never sees the entry.
+func claudeConfigDir(home string) string {
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return d
+	}
+	return home
 }
 
 // claudeDesktopPath returns the per-OS Claude Desktop config path, or "" if
