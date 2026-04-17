@@ -257,6 +257,7 @@ func runInit(_ context.Context, _ []string) error {
 		fmt.Println("install one of them first, then run `mnemos init` again.")
 		return nil
 	}
+	hasClaudeCode := false
 	for _, t := range targets {
 		changed, err := installer.Install(t, entry)
 		if err != nil {
@@ -268,7 +269,32 @@ func runInit(_ context.Context, _ []string) error {
 		} else {
 			fmt.Printf("  ○ %s already up to date\n", t.Name)
 		}
+		if t.Name == "Claude Code (user)" {
+			hasClaudeCode = true
+		}
 	}
+
+	// SessionStart hook is Claude Code specific. Without it, prewarm only
+	// fires when the agent explicitly calls mnemos_session_start — which is
+	// exactly the failure mode this wiring exists to fix.
+	if hasClaudeCode {
+		settings := installer.ClaudeSettingsPath()
+		hookEntry := installer.HookEntry{
+			Matcher: "startup",
+			Command: fmt.Sprintf("%s prewarm", selfPath),
+			Timeout: 10,
+		}
+		changed, err := installer.InstallHook(settings, hookEntry)
+		switch {
+		case err != nil:
+			fmt.Printf("  ✗ Claude Code SessionStart hook (%s): %v\n", settings, err)
+		case changed:
+			fmt.Printf("  ✓ Claude Code SessionStart hook wired at %s\n", settings)
+		default:
+			fmt.Printf("  ○ Claude Code SessionStart hook already up to date\n")
+		}
+	}
+
 	fmt.Println()
 	fmt.Println("restart your agent. the mnemos_* tools will appear next session.")
 	return nil
@@ -308,8 +334,22 @@ func runDoctor(ctx context.Context, _ []string) error {
 	if len(targets) == 0 {
 		check(false, "no agent clients detected")
 	}
+	hasClaudeCode := false
 	for _, t := range targets {
 		check(installer.IsInstalled(t), "%s %s", t.Name, t.Path)
+		if t.Name == "Claude Code (user)" {
+			hasClaudeCode = true
+		}
+	}
+
+	if hasClaudeCode {
+		settings := installer.ClaudeSettingsPath()
+		hookEntry := installer.HookEntry{
+			Matcher: "startup",
+			Command: fmt.Sprintf("%s prewarm", selfPath),
+		}
+		check(installer.IsHookInstalled(settings, hookEntry),
+			"Claude Code SessionStart hook %s", settings)
 	}
 	if !ok {
 		return errors.New("doctor found issues")

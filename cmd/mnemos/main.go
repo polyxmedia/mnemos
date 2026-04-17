@@ -52,6 +52,7 @@ var commands = map[string]handler{
 	"embed":     runEmbed,
 	"skill":     runSkill,
 	"replay":    runReplay,
+	"prewarm":   runPrewarm,
 	"version":   runVersion,
 	"config":    runConfig,
 	"init":      runInit,
@@ -97,6 +98,7 @@ Commands:
   skill export [names]   Build a shareable pack (stdout or --out file)
   skill import <src>     Import a pack from a file path or https URL
   replay <session_id>    Markdown recap of a prior session + what you've learned since
+  prewarm [flags]        Print the session_start prewarm block (used by the Claude Code hook)
   init                   Register mnemos with Claude Code / Cursor / Windsurf
   doctor                 Check installation health
   config                 Print the current configuration
