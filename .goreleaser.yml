@@ -79,23 +79,21 @@ release:
   prerelease: auto
   draft: false
 
-# Homebrew tap publishing. Gated on HOMEBREW_TAP_GITHUB_TOKEN so this
-# block is a no-op unless (a) polyxmedia/homebrew-tap exists and
-# (b) a PAT with write access is set as the HOMEBREW_TAP_GITHUB_TOKEN
-# secret in this repo's Actions settings. Without both, the release
-# still produces binaries + checksums; just no formula push.
-brews:
-  - name: mnemos
-    disable: '{{ if eq (index .Env "HOMEBREW_TAP_GITHUB_TOKEN") "" }}true{{ end }}'
-    repository:
-      owner: polyxmedia
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: "https://github.com/polyxmedia/mnemos"
-    description: "Persistent memory and skills for AI coding agents — MCP-native, single binary, zero deps."
-    license: "MIT"
-    test: |
-      system "#{bin}/mnemos version"
-    install: |
-      bin.install "mnemos"
+# Homebrew tap publishing is left unconfigured until the tap repo
+# (polyxmedia/homebrew-tap) exists and HOMEBREW_TAP_GITHUB_TOKEN is set
+# as an Actions secret. When ready, uncomment the block below.
+#
+# brews:
+#   - name: mnemos
+#     repository:
+#       owner: polyxmedia
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+#     directory: Formula
+#     homepage: "https://github.com/polyxmedia/mnemos"
+#     description: "Persistent memory and skills for AI coding agents — MCP-native, single binary, zero deps."
+#     license: "MIT"
+#     test: |
+#       system "#{bin}/mnemos version"
+#     install: |
+#       bin.install "mnemos"
