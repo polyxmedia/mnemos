@@ -56,6 +56,7 @@ var commands = map[string]handler{
 	"version":   runVersion,
 	"config":    runConfig,
 	"init":      runInit,
+	"update":    runUpdate,
 	"doctor":    runDoctor,
 	"-v":        runVersion,
 	"--version": runVersion,
@@ -100,6 +101,7 @@ Commands:
   replay <session_id>    Markdown recap of a prior session + what you've learned since
   prewarm [flags]        Print the session_start prewarm block (used by the Claude Code hook)
   init                   Register mnemos with Claude Code / Cursor / Windsurf
+  update [--yes]         Download the latest release and replace this binary
   doctor                 Check installation health
   config                 Print the current configuration
   version                Print the binary version

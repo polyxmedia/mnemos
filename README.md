@@ -64,6 +64,8 @@ mnemos init
 
 All paths end with `mnemos init`, which auto-wires Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Then restart your agent.
 
+**Updating:** `mnemos update` downloads the latest release, verifies its sha256 against the published `checksums.txt`, and replaces the running binary in place. Add `--yes` to skip the confirmation prompt.
+
 ## Quick start
 
 ```
@@ -253,6 +255,7 @@ Mnemos is new (v0.1.x, early adoption). Table based on public documentation as o
 | `mnemos skill import <file-or-url>` | Install a pack from disk or an `https://` URL |
 | `mnemos replay <session_id>` | Markdown recap of a past session + what you've learned since |
 | `mnemos prewarm [flags]` | Print the session_start prewarm block (used by the Claude Code hook) |
+| `mnemos update [--yes]` | Download the latest release, verify sha256, and replace this binary |
 | `mnemos config` | Print current config |
 | `mnemos version` | Print version |
 
