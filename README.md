@@ -2,7 +2,8 @@
 
 <p align="center">
   <strong>Persistent memory and skills for AI coding agents.</strong><br/>
-  MCP-native · single Go binary · zero runtime dependencies.
+  MCP-native · single Go binary · zero runtime dependencies.<br/>
+  <sub>by <a href="https://x.com/voidmode">André Figueira</a> · <a href="https://polyxmedia.com">Polyxmedia</a></sub>
 </p>
 
 <p align="center">
@@ -334,6 +335,6 @@ MIT. See [LICENSE](LICENSE).
 
 ## About
 
-Built by [Polyxmedia](https://polyxmedia.com). Follow [@voidmode](https://x.com/voidmode) for Mnemos updates, agent research, and build-in-public notes.
+Created by [André Figueira](https://x.com/voidmode) at [Polyxmedia](https://polyxmedia.com). See [AUTHORS.md](AUTHORS.md) and [ROADMAP.md](ROADMAP.md).
 
 If Mnemos helps you ship, a star is the fastest way to tell us. Issues and PRs welcome.
