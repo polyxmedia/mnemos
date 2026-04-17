@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "created_at": "2026-04-17T02:52:09.817824Z",
+  "source": {
+    "name": "@voidmode",
+    "url": "https://raw.githubusercontent.com/polyxmedia/mnemos/main/packs/mnemos-dev-v0.2.json",
+    "project": "mnemos"
+  },
+  "skills": [
+    {
+      "name": "verify-release",
+      "description": "confirm a goreleaser-driven release actually shipped",
+      "procedure": "1. gh run list --repo polyxmedia/mnemos --limit 3 — check Release workflow conclusion\n2. gh release view vX.Y.Z — confirm assets: 5 binaries + checksums.txt\n3. curl the install.sh and run against a throwaway HOME\n4. if failure, gh run view NNN --log-failed to find the goreleaser error",
+      "tags": [
+        "release",
+        "verification"
+      ]
+    },
+    {
+      "name": "add-storage-method",
+      "description": "add a new method to the observation store",
+      "procedure": "1. declare in the appropriate memory.Reader / Writer / Maintenance / Exportable / Vectorable interface\n2. implement in internal/storage/observations.go (or sessions.go / skills.go)\n3. pass time.Now().UTC() explicitly for any bi-temporal columns\n4. add test in internal/storage/*_test.go (use openObsDB helper)\n5. if consumed by a service, wire through at the Config boundary",
+      "pitfalls": "putting the method on Store instead of the narrowest interface; using CURRENT_TIMESTAMP on a bi-temporal column",
+      "tags": [
+        "storage",
+        "architecture"
+      ]
+    },
+    {
+      "name": "add-mcp-tool",
+      "description": "add a new MCP tool via the official Go SDK",
+      "procedure": "1. define args struct with json and jsonschema tags in internal/mcp/tools.go\n2. add handler method (ctx, *CallToolRequest, args) (*CallToolResult, any, error)\n3. register via mcpsdk.AddTool in registerTools()\n4. add integration test in server_test.go using NewInMemoryTransports\n5. update docs/MCP_TOOLS.md + README tool list",
+      "pitfalls": "forget the jsonschema struct tags and the SDK cant infer descriptions; forget to register and the tool is invisible",
+      "tags": [
+        "mcp",
+        "go"
+      ]
+    },
+    {
+      "name": "ship-a-feature",
+      "description": "ship a feature end-to-end: tests → commit → push → release",
+      "procedure": "1. go test ./... -race -count=1 (must pass)\n2. golangci-lint run ./... (must be 0 issues)\n3. manual smoke test the feature via bin/mnemos\n4. git add -A \u0026\u0026 git commit -m \"feat: ...\" with no AI attribution\n5. git push\n6. when ready, make release V=vX.Y.Z\n7. wait for goreleaser workflow; verify gh release view vX.Y.Z shows assets",
+      "tags": [
+        "workflow",
+        "release"
+      ]
+    }
+  ]
+}
