@@ -6,7 +6,7 @@
 #
 # Detects platform, downloads the latest release binary, installs it to
 # ~/.local/bin (or /usr/local/bin as fallback), and auto-registers with
-# Claude Code / Cursor / Windsurf via `mnemos init`.
+# Claude Code / Claude Desktop / Cursor / Windsurf / Codex via `mnemos init`.
 
 set -euo pipefail
 
@@ -126,7 +126,7 @@ main() {
       ;;
   esac
 
-  log "registering with agent clients (Claude Code / Cursor / Windsurf)"
+  log "registering with agent clients (Claude Code / Claude Desktop / Cursor / Windsurf / Codex)"
   "${install_dir}/${BINARY}" init || true
 
   echo

@@ -45,7 +45,7 @@ Most AI memory tools treat memory as a bucket: dump conversations in, hope retri
 | Go | `go install github.com/polyxmedia/mnemos/cmd/mnemos@latest` |
 | Manual | [Download a release binary](https://github.com/polyxmedia/mnemos/releases) |
 
-All paths end with `mnemos init`, which auto-wires Claude Code, Cursor, and Windsurf MCP configs. Then restart your agent.
+All paths end with `mnemos init`, which auto-wires Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Then restart your agent.
 
 ## Quick start
 
@@ -138,9 +138,13 @@ Restart Claude Code. The `mnemos_*` tools appear on next session.
 }
 ```
 
+### Claude Desktop
+
+Auto-wired by `mnemos init`. Config path: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Same `mcpServers.mnemos` shape as Claude Code.
+
 ### OpenAI Codex CLI
 
-Codex reads MCP servers from `~/.codex/config.toml`:
+Auto-wired by `mnemos init` at `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.mnemos]

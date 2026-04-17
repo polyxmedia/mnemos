@@ -253,7 +253,7 @@ func runInit(_ context.Context, _ []string) error {
 
 	targets := installer.DetectTargets()
 	if len(targets) == 0 {
-		fmt.Println("no agent clients detected (Claude Code, Cursor, Windsurf).")
+		fmt.Println("no agent clients detected (Claude Code, Claude Desktop, Cursor, Windsurf, Codex CLI).")
 		fmt.Println("install one of them first, then run `mnemos init` again.")
 		return nil
 	}

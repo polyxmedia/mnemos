@@ -1,26 +1,38 @@
-// Package installer wires Mnemos into agent clients (Claude Code, Cursor,
-// Windsurf) by editing their MCP config files idempotently. It also powers
-// `mnemos doctor` for self-diagnosis.
+// Package installer wires Mnemos into agent clients (Claude Code, Claude
+// Desktop, Cursor, Windsurf, Codex CLI) by editing their MCP config files
+// idempotently. It also powers `mnemos doctor` for self-diagnosis.
 package installer
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+
+	"github.com/BurntSushi/toml"
+)
+
+// Format identifies the on-disk encoding of a target's config file.
+const (
+	FormatJSON = "json"
+	FormatTOML = "toml"
 )
 
 // Target describes an MCP client config location and how to patch it. The
-// Mnemos entry is keyed under Target.Key (usually "mnemos") inside an
-// mcpServers object. We never rewrite unrelated keys.
+// Mnemos entry is keyed under Group[Key] inside the file. We never rewrite
+// unrelated keys.
 type Target struct {
-	Name string // human-readable (Claude Code, Cursor, ...)
-	Path string // absolute path to the JSON config
-	Key  string // server key under mcpServers
+	Name   string // human-readable (Claude Code, Cursor, ...)
+	Path   string // absolute path to the config file
+	Group  string // parent map key (default: "mcpServers")
+	Key    string // server key under Group (default: "mnemos")
+	Format string // "json" or "toml" (default: "json")
 }
 
-// ServerEntry is the value we write under mcpServers[Key].
+// ServerEntry is the value we write under Group[Key].
 type ServerEntry struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
@@ -39,6 +51,10 @@ func DetectTargets() []Target {
 		{Name: "Claude Code (user)", Path: filepath.Join(home, ".claude.json"), Key: "mnemos"},
 		{Name: "Cursor", Path: filepath.Join(home, ".cursor", "mcp.json"), Key: "mnemos"},
 		{Name: "Windsurf", Path: filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"), Key: "mnemos"},
+		{Name: "OpenAI Codex CLI", Path: filepath.Join(home, ".codex", "config.toml"), Group: "mcp_servers", Key: "mnemos", Format: FormatTOML},
+	}
+	if p := claudeDesktopPath(); p != "" {
+		candidates = append(candidates, Target{Name: "Claude Desktop", Path: p, Key: "mnemos"})
 	}
 	out := make([]Target, 0, len(candidates))
 	for _, c := range candidates {
@@ -56,48 +72,52 @@ func DetectTargets() []Target {
 	return out
 }
 
+// claudeDesktopPath returns the per-OS Claude Desktop config path, or "" if
+// the platform doesn't ship Claude Desktop.
+func claudeDesktopPath() string {
+	switch runtime.GOOS {
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "windows":
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return filepath.Join(appData, "Claude", "claude_desktop_config.json")
+		}
+	}
+	// No official Claude Desktop on Linux. Skip.
+	return ""
+}
+
 // Install patches the given target, adding (or updating) the mnemos entry
-// under mcpServers. Unrelated keys are preserved. Returns true if the file
+// under Group. Unrelated keys are preserved. Returns true if the file
 // was written (false if it was already up to date).
 func Install(t Target, entry ServerEntry) (bool, error) {
+	t = normalise(t)
 	if err := ensureDir(filepath.Dir(t.Path)); err != nil {
 		return false, err
 	}
-
-	cfg := map[string]any{}
-	if data, err := os.ReadFile(t.Path); err == nil && len(data) > 0 {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return false, fmt.Errorf("parse %s: %w", t.Path, err)
-		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("read %s: %w", t.Path, err)
+	cfg, err := readConfig(t)
+	if err != nil {
+		return false, err
 	}
 
-	servers, _ := cfg["mcpServers"].(map[string]any)
-	if servers == nil {
-		servers = map[string]any{}
-	}
-
-	desired := map[string]any{"command": entry.Command}
-	if len(entry.Args) > 0 {
-		desired["args"] = entry.Args
-	}
-	if len(entry.Env) > 0 {
-		desired["env"] = entry.Env
-	}
+	servers := asStringMap(cfg[t.Group])
+	desired := desiredEntry(entry)
 
 	existing, _ := servers[t.Key].(map[string]any)
 	if equalMaps(existing, desired) {
 		return false, nil
 	}
 	servers[t.Key] = desired
-	cfg["mcpServers"] = servers
+	cfg[t.Group] = servers
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := encodeConfig(t.Format, cfg)
 	if err != nil {
-		return false, fmt.Errorf("marshal: %w", err)
+		return false, err
 	}
-	data = append(data, '\n')
 	if err := writeAtomic(t.Path, data); err != nil {
 		return false, err
 	}
@@ -107,43 +127,134 @@ func Install(t Target, entry ServerEntry) (bool, error) {
 // Uninstall removes the mnemos entry from the target. Returns true if the
 // file was changed.
 func Uninstall(t Target) (bool, error) {
+	t = normalise(t)
 	data, err := os.ReadFile(t.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
+		return false, fmt.Errorf("read %s: %w", t.Path, err)
+	}
+	cfg, err := decodeConfig(t.Format, data)
+	if err != nil {
 		return false, err
 	}
-	cfg := map[string]any{}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false, fmt.Errorf("parse: %w", err)
-	}
-	servers, _ := cfg["mcpServers"].(map[string]any)
+	servers, _ := cfg[t.Group].(map[string]any)
 	if _, ok := servers[t.Key]; !ok {
 		return false, nil
 	}
 	delete(servers, t.Key)
-	cfg["mcpServers"] = servers
-	out, err := json.MarshalIndent(cfg, "", "  ")
+	cfg[t.Group] = servers
+	out, err := encodeConfig(t.Format, cfg)
 	if err != nil {
 		return false, err
 	}
-	return true, writeAtomic(t.Path, append(out, '\n'))
+	return true, writeAtomic(t.Path, out)
 }
 
 // IsInstalled reports whether the target already has a mnemos entry.
 func IsInstalled(t Target) bool {
+	t = normalise(t)
 	data, err := os.ReadFile(t.Path)
 	if err != nil {
 		return false
 	}
-	cfg := map[string]any{}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	cfg, err := decodeConfig(t.Format, data)
+	if err != nil {
 		return false
 	}
-	servers, _ := cfg["mcpServers"].(map[string]any)
+	servers, _ := cfg[t.Group].(map[string]any)
 	_, ok := servers[t.Key]
 	return ok
+}
+
+func normalise(t Target) Target {
+	if t.Group == "" {
+		t.Group = "mcpServers"
+	}
+	if t.Key == "" {
+		t.Key = "mnemos"
+	}
+	if t.Format == "" {
+		t.Format = FormatJSON
+	}
+	return t
+}
+
+func readConfig(t Target) (map[string]any, error) {
+	data, err := os.ReadFile(t.Path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]any{}, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", t.Path, err)
+	}
+	if len(data) == 0 {
+		return map[string]any{}, nil
+	}
+	return decodeConfig(t.Format, data)
+}
+
+func decodeConfig(format string, data []byte) (map[string]any, error) {
+	cfg := map[string]any{}
+	switch format {
+	case FormatJSON:
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("parse json: %w", err)
+		}
+	case FormatTOML:
+		if _, err := toml.Decode(string(data), &cfg); err != nil {
+			return nil, fmt.Errorf("parse toml: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unknown format: %s", format)
+	}
+	return cfg, nil
+}
+
+func encodeConfig(format string, cfg map[string]any) ([]byte, error) {
+	switch format {
+	case FormatJSON:
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal json: %w", err)
+		}
+		return append(data, '\n'), nil
+	case FormatTOML:
+		var buf bytes.Buffer
+		if err := toml.NewEncoder(&buf).Encode(cfg); err != nil {
+			return nil, fmt.Errorf("marshal toml: %w", err)
+		}
+		return buf.Bytes(), nil
+	default:
+		return nil, fmt.Errorf("unknown format: %s", format)
+	}
+}
+
+func asStringMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
+}
+
+func desiredEntry(entry ServerEntry) map[string]any {
+	out := map[string]any{"command": entry.Command}
+	if len(entry.Args) > 0 {
+		args := make([]any, len(entry.Args))
+		for i, a := range entry.Args {
+			args[i] = a
+		}
+		out["args"] = args
+	}
+	if len(entry.Env) > 0 {
+		env := make(map[string]any, len(entry.Env))
+		for k, v := range entry.Env {
+			env[k] = v
+		}
+		out["env"] = env
+	}
+	return out
 }
 
 func ensureDir(dir string) error {
