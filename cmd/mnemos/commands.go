@@ -83,7 +83,16 @@ func runStats(ctx context.Context, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("stats: %w", err)
 	}
-	skillCount, _ := d.skl.List(ctx, "")
+	skillList, _ := d.skl.List(ctx, "")
+	promotedCount := 0
+	for _, s := range skillList {
+		for _, tag := range s.Tags {
+			if tag == "auto-promoted" {
+				promotedCount++
+				break
+			}
+		}
+	}
 	fi, _ := os.Stat(d.cfg.Storage.Path)
 	var size int64
 	if fi != nil {
@@ -92,7 +101,8 @@ func runStats(ctx context.Context, _ []string) error {
 	fmt.Printf("database:          %s (%d bytes)\n", d.cfg.Storage.Path, size)
 	fmt.Printf("observations:      %d (%d live)\n", st.Observations, st.LiveObservations)
 	fmt.Printf("sessions:          %d\n", st.Sessions)
-	fmt.Printf("skills:            %d\n", len(skillCount))
+	fmt.Printf("skills:            %d (%d auto-promoted from corrections)\n",
+		len(skillList), promotedCount)
 	if len(st.TopTags) > 0 {
 		fmt.Println("top tags:")
 		for _, t := range st.TopTags {

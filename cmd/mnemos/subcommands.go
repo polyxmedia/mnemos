@@ -32,6 +32,8 @@ func runDream(ctx context.Context, args []string) error {
 	svc := dream.NewService(dream.Config{
 		Memory:      d.mem,
 		Store:       d.db.Observations(),
+		Reader:      d.db.Observations(),
+		Skills:      d.skl,
 		Logger:      slog.Default(),
 		StaleDays:   d.cfg.Dream.StaleDays,
 		DecayAmount: d.cfg.Dream.DecayAmount,

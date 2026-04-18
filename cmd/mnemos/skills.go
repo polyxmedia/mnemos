@@ -159,7 +159,15 @@ func runSkillList(ctx context.Context, _ []string) error {
 			effMark = fmt.Sprintf(" · %d uses · %.0f%% effective",
 				sk.UseCount, sk.Effectiveness*100)
 		}
-		fmt.Printf("  %-32s v%d%s\n    %s\n\n", sk.Name, sk.Version, effMark, sk.Description)
+		marker := ""
+		for _, tag := range sk.Tags {
+			if tag == "auto-promoted" {
+				marker = " [auto-promoted]"
+				break
+			}
+		}
+		fmt.Printf("  %-32s v%d%s%s\n    %s\n\n",
+			sk.Name, sk.Version, marker, effMark, sk.Description)
 	}
 	return nil
 }

@@ -79,10 +79,11 @@ func TestJournalSummaryIncludesCounts(t *testing.T) {
 		Pruned:     5,
 		Decayed:    3,
 		Linked:     1,
+		Promoted:   2,
 		Notes:      []string{"test note"},
 	}
 	s := j.Summary()
-	for _, want := range []string{"pruned:  5", "decayed: 3", "linked:  1", "test note"} {
+	for _, want := range []string{"pruned: 5", "decayed: 3", "linked: 1", "promoted: 2", "test note"} {
 		if !contains(s, want) {
 			t.Errorf("summary missing %q: %s", want, s)
 		}

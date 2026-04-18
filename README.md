@@ -39,6 +39,8 @@ mnemos init
 
 **Correction journal.** `tried / wrong_because / fix` as a first-class observation type with retrieval boosting. The agent records a mistake once; next session, the correction surfaces before the same path is taken again. Compounds over weeks of use.
 
+**Corrections → skills.** The dream pass scans accumulated corrections and when three or more cluster on the same (project, topic), mints an auto-promoted skill with `## When this applies`, `## Avoid`, `## Do` sections synthesised from the underlying `tried / wrong_because / fix` records. Idempotent via a stable origin hash: new corrections join the existing skill and bump its version instead of creating duplicates. The agent goes from "avoided this one mistake" to "learned a rule" without a human in the loop.
+
 **Compaction recovery.** When Claude Code (or any agent) compacts its context mid-session, one call to `mnemos_context` in recovery mode restores the goal, decisions, and in-session observations. A dedicated API surface, built for this case.
 
 **Retrospective replay.** `mnemos replay <session_id>` generates a markdown recap of a past session with everything learned since: corrections recorded after, conventions added after, skills promoted after, and observations that have been superseded. Paste it back into your agent and ask what you'd do differently now.
