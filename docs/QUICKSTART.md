@@ -57,6 +57,18 @@ Call mnemos_correct with:
 
 Next session that touches oauth in this project, the correction surfaces before the agent tries the wrong approach again.
 
+## 7. Let corrections compound into skills
+
+After three or more corrections cluster on the same project + topic, the consolidation pass promotes them into a skill with `When this applies / Avoid / Do` sections. Promotion runs on every dream pass (manual via `mnemos dream`, or continuously with `mnemos dream --watch`). Listing skills shows which ones were auto-promoted:
+
+```
+$ mnemos skill list
+  auto: oauth (my-repo)            v1 [auto-promoted]
+    Auto-promoted from 3 corrections in my-repo: oauth
+```
+
+`mnemos stats` surfaces the count: `skills: N (M auto-promoted from corrections)`.
+
 ## Troubleshooting
 
 **`mnemos init` didn't find my agent client.**

@@ -6,6 +6,7 @@ Open work on Mnemos. Pick anything here and ship it. If you want to claim an ite
 
 - [x] v0.1.0 — storage, memory service, MCP server (14 tools), installer, HTTP API
 - [x] v0.2.0 — skill packs, session replay, bi-temporal timestamp precision fix
+- [x] v0.3.x (unreleased) — Claude Code SessionStart hook auto-wired by `mnemos init`, self-updating binary (`mnemos update`), corrections-to-skills auto-promotion in the dream pass
 
 ## Next up — high-leverage
 

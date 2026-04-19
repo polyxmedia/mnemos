@@ -23,6 +23,7 @@ Mnemos is a layered Go service with strict boundaries. This document walks the l
 ├──────────────────────────────────────────────────────────┤
 │  internal/prewarm          (push-based context assembly) │
 │  internal/safety           (promptware scanner)          │
+│  internal/dream            (consolidation + promotion)   │
 ├──────────────────────────────────────────────────────────┤
 │  internal/memory           (Observation service)         │
 │  internal/session          (Session service)             │
@@ -73,7 +74,22 @@ Compaction-recovery mode reuses the pipeline but prioritises the current session
 
 ## Skills
 
-Procedural memory. `(agent_id, name)` is unique; saving the same name again bumps `version` instead of duplicating. `effectiveness` is `success_count / use_count`, nudges ranking. No LLM calls from inside the memory layer — the agent authors skill content; we store and rank.
+Procedural memory. `(agent_id, name)` is unique; saving the same name again bumps `version` instead of duplicating. `effectiveness` is `success_count / use_count`, nudges ranking. No LLM calls from inside the memory layer.
+
+Skills arrive two ways. The primary path is agent-authored: the agent calls `mnemos_skill_save` and we store + rank. The secondary path is pattern-mined: the dream pass (see below) clusters correction observations and promotes them into skills when a cluster crosses a threshold. Promotion is pure string assembly over the structured correction records, so the "no LLM in the memory layer" invariant holds in both paths.
+
+## Dream consolidation
+
+`internal/dream` runs the sleep-time-compute pass, either one-shot (`mnemos dream`) or as a daemon (`mnemos dream --watch`). Each pass produces a `Journal` mirrored into memory as a `TypeDream` observation so the agent can query its own history via normal search.
+
+Pipeline, in order:
+
+1. **Prune** expired observations (`valid_until` passed or `expires_at` reached).
+2. **Decay** importance on rows idle past `StaleDays`.
+3. **Promote** skills from correction clusters. When three or more live corrections share an `(agent_id, project, label)` key — label = first tag, falling back to a normalised title prefix — the pass synthesises a skill with `## When this applies / ## Avoid / ## Do` sections. Idempotency is keyed on a 12-char sha256 of the group, carried as a `promoted-origin:<hash>` tag on the resulting skill. Repeat passes either no-op (nothing new) or version-bump (new corrections joined the group).
+4. **Journal** — write the counts as a dream observation if any step changed state.
+
+`dream.Config` takes the `memory.Reader` + `*skills.Service` for step 3; when either is nil the step silently skips so existing callers that predate promotion still work.
 
 ## MCP
 
@@ -87,7 +103,7 @@ Resources (`mnemos://session/current`, `mnemos://skills/index`, `mnemos://stats`
 
 ## What we deliberately don't do
 
-- **No LLM calls from inside Mnemos.** Reflection, skill extraction, summaries — all agent-authored. We store and rank. The agent thinks.
+- **No LLM calls from inside Mnemos.** Reflection and summaries are agent-authored. Skill promotion is the one place we go beyond pure storage, and even there it is deterministic pattern-mining over structured correction records — no model inference, no prompts.
 - **No push of context mid-session by default.** Only on session_start and explicit recovery-mode calls. Otherwise it's too easy to flood the agent's context.
 - **No vector DB dependency.** Optional embeddings stored as BLOBs in the same SQLite file. Zero infrastructure.
 - **No multi-tenant SaaS wiring.** Local-first. Team deploy uses the HTTP transport; auth and ACL live downstream.
