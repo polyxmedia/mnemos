@@ -292,13 +292,13 @@ func scanCandidates(rows *sql.Rows) ([]rumination.Candidate, error) {
 	var out []rumination.Candidate
 	for rows.Next() {
 		var (
-			c             rumination.Candidate
-			severity      int
-			targetKind    string
-			status        string
-			evidenceBlob  string
-			resolvedAt    sql.NullTime
-			dismissedAt   sql.NullTime
+			c            rumination.Candidate
+			severity     int
+			targetKind   string
+			status       string
+			evidenceBlob string
+			resolvedAt   sql.NullTime
+			dismissedAt  sql.NullTime
 		)
 		if err := rows.Scan(
 			&c.ID, &c.MonitorName, &severity, &c.Reason,

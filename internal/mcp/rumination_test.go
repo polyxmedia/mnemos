@@ -111,10 +111,10 @@ func TestRuminate_ToolsExposedWhenServiceWired(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		"mnemos_ruminate_list":     true,
-		"mnemos_ruminate_pack":     true,
-		"mnemos_ruminate_resolve":  true,
-		"mnemos_ruminate_dismiss":  true,
+		"mnemos_ruminate_list":    true,
+		"mnemos_ruminate_pack":    true,
+		"mnemos_ruminate_resolve": true,
+		"mnemos_ruminate_dismiss": true,
 	}
 	for _, tool := range res.Tools {
 		delete(want, tool.Name)

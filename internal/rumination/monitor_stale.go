@@ -102,4 +102,3 @@ func staleSeverity(ageDays, cutoffDays int) Severity {
 		return SeverityLow
 	}
 }
-

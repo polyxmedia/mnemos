@@ -579,14 +579,14 @@ func (s *Server) handleRuminateList(ctx context.Context, _ *mcpsdk.CallToolReque
 	out := make([]map[string]any, 0, len(list))
 	for _, c := range list {
 		out = append(out, map[string]any{
-			"id":           c.ID,
-			"monitor":      c.MonitorName,
-			"severity":     c.Severity.String(),
-			"reason":       c.Reason,
-			"target_kind":  string(c.TargetKind),
-			"target_id":    c.TargetID,
-			"detected_at":  c.DetectedAt,
-			"evidence_n":   len(c.Evidence),
+			"id":          c.ID,
+			"monitor":     c.MonitorName,
+			"severity":    c.Severity.String(),
+			"reason":      c.Reason,
+			"target_kind": string(c.TargetKind),
+			"target_id":   c.TargetID,
+			"detected_at": c.DetectedAt,
+			"evidence_n":  len(c.Evidence),
 		})
 	}
 	counts, _ := s.cfg.Rumination.Counts(ctx)
@@ -616,12 +616,12 @@ func (s *Server) handleRuminatePack(ctx context.Context, _ *mcpsdk.CallToolReque
 		return nil, nil, err
 	}
 	return jsonResult(map[string]any{
-		"candidate_id":    block.CandidateID,
-		"target_kind":     string(block.Target.Kind),
-		"target_id":       block.Target.ID,
-		"target_name":     block.Target.Name,
-		"text":            block.Text,
-		"token_estimate":  block.TokenEstimate,
+		"candidate_id":   block.CandidateID,
+		"target_kind":    string(block.Target.Kind),
+		"target_id":      block.Target.ID,
+		"target_name":    block.Target.Name,
+		"text":           block.Text,
+		"token_estimate": block.TokenEstimate,
 	})
 }
 

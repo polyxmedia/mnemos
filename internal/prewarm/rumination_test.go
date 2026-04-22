@@ -17,12 +17,12 @@ import (
 // avoids the SQLite dependency so we can assert the rendering path in
 // isolation: we control exactly which candidates the prewarm sees.
 type fakeRumReader struct {
-	pending         []rumination.Candidate
-	byTarget        map[string][]rumination.Candidate // key: kind + ":" + id
-	pendingErr      error
-	byTargetErr     error
-	pendingCalls    int
-	byTargetCalls   int
+	pending       []rumination.Candidate
+	byTarget      map[string][]rumination.Candidate // key: kind + ":" + id
+	pendingErr    error
+	byTargetErr   error
+	pendingCalls  int
+	byTargetCalls int
 }
 
 func (f *fakeRumReader) Pending(ctx context.Context, limit int) ([]rumination.Candidate, error) {

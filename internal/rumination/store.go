@@ -72,4 +72,3 @@ const (
 	StatusResolved  Status = "resolved"
 	StatusDismissed Status = "dismissed"
 )
-

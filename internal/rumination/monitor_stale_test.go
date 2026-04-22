@@ -11,10 +11,10 @@ import (
 func TestStaleSkillMonitor_FiresOnOldUnderperforming(t *testing.T) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name       string
-		skill      skills.Skill
-		wantFires  bool
-		wantSev    Severity
+		name      string
+		skill     skills.Skill
+		wantFires bool
+		wantSev   Severity
 	}{
 		{
 			name: "old + low effectiveness fires",

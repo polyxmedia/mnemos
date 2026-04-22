@@ -128,12 +128,12 @@ func TestCorrectionRepeatMonitor_NoMatchingSkill(t *testing.T) {
 
 func TestIsStructuralCorrectionTag(t *testing.T) {
 	cases := map[string]bool{
-		"oauth":                        false,
-		"auto-promoted":                true,
-		"promoted-origin:abc123":       true,
-		"project:mnemos":               true,
-		"ruminated-from:rumination-x":  true,
-		"":                             false, // empty is handled elsewhere
+		"oauth":                       false,
+		"auto-promoted":               true,
+		"promoted-origin:abc123":      true,
+		"project:mnemos":              true,
+		"ruminated-from:rumination-x": true,
+		"":                            false, // empty is handled elsewhere
 	}
 	for tag, want := range cases {
 		if got := isStructuralCorrectionTag(tag); got != want {

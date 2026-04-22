@@ -64,7 +64,7 @@ func TestRumination_EndToEnd(t *testing.T) {
 
 	// --- 2. Convention + contradicting correction (ContradictionMonitor) --
 	conv, err := mem.Save(ctx, memory.SaveInput{
-		Title: "use sqlite for storage",
+		Title:   "use sqlite for storage",
 		Content: "sqlite is sufficient at this scale",
 		Type:    memory.TypeConvention,
 		Project: "proj",
@@ -73,7 +73,7 @@ func TestRumination_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	contra, err := mem.Save(ctx, memory.SaveInput{
-		Title: "postgres is the right call",
+		Title:   "postgres is the right call",
 		Content: "after load testing we discovered sqlite locks at n concurrent writers",
 		Type:    memory.TypeCorrection,
 		Project: "proj",
