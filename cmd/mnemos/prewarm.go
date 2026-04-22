@@ -14,14 +14,19 @@ import (
 	"github.com/polyxmedia/mnemos/internal/session"
 )
 
-// hookInput mirrors the JSON payload Claude Code writes to the SessionStart
-// hook's stdin. We tolerate missing fields: the command also runs standalone
-// from a regular shell where stdin carries nothing.
+// hookInput mirrors the JSON payload Claude Code writes to hook stdin.
+// Fields are a superset across SessionStart, UserPromptSubmit, Stop, and
+// PostToolUse — missing fields are tolerated, since each hook populates
+// only what its event carries, and the command also runs standalone from
+// a regular shell where stdin carries nothing.
 type hookInput struct {
-	SessionID     string `json:"session_id,omitempty"`
-	CWD           string `json:"cwd,omitempty"`
-	HookEventName string `json:"hook_event_name,omitempty"`
-	Source        string `json:"source,omitempty"`
+	SessionID     string         `json:"session_id,omitempty"`
+	CWD           string         `json:"cwd,omitempty"`
+	HookEventName string         `json:"hook_event_name,omitempty"`
+	Source        string         `json:"source,omitempty"`
+	Prompt        string         `json:"prompt,omitempty"`
+	ToolName      string         `json:"tool_name,omitempty"`
+	ToolInput     map[string]any `json:"tool_input,omitempty"`
 }
 
 // runPrewarm composes a prewarm block and prints it. Designed to be wired as

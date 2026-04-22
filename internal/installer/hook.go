@@ -8,13 +8,24 @@ import (
 	"path/filepath"
 )
 
-// HookEntry describes a Claude Code SessionStart hook to wire into
-// settings.json. Multiple matchers (startup, resume, compact) can share the
-// same command — we install one entry per matcher.
+// HookEntry describes a Claude Code hook to wire into settings.json. One
+// entry per (event, matcher, command) tuple. Event defaults to SessionStart
+// for backward compatibility with the original single-hook API.
 type HookEntry struct {
-	Matcher string // "startup" | "resume" | "clear" | "compact" | "*"
+	Event   string // "SessionStart" | "UserPromptSubmit" | "Stop" | "PostToolUse" | ...
+	Matcher string // event-specific: SessionStart source, PostToolUse tool_name; may be empty
 	Command string // full command line, e.g. "/usr/local/bin/mnemos prewarm"
 	Timeout int    // seconds; zero means omit the field
+}
+
+// eventName returns the Claude Code event slot Entry belongs under. Empty
+// Event defaults to SessionStart to preserve the legacy behavior of the
+// original single-hook API.
+func (e HookEntry) eventName() string {
+	if e.Event == "" {
+		return "SessionStart"
+	}
+	return e.Event
 }
 
 // ClaudeSettingsPath returns the path to the Claude Code user-scope
@@ -35,10 +46,10 @@ func claudeSettingsDir(home string) string {
 	return filepath.Join(home, ".claude")
 }
 
-// InstallHook adds entry to settings.json under hooks.SessionStart. It is
-// idempotent: if an entry with the same matcher and command already exists,
-// it returns changed=false. Other hooks (whether for other events or other
-// commands under SessionStart) are preserved untouched.
+// InstallHook adds entry to settings.json under the event slot (default
+// SessionStart). It is idempotent: if an entry with the same (event,
+// matcher, command) already exists, it returns changed=false. Other hooks
+// (for other events or other commands) are preserved untouched.
 func InstallHook(path string, entry HookEntry) (bool, error) {
 	if err := ensureDir(filepath.Dir(path)); err != nil {
 		return false, err
@@ -48,15 +59,16 @@ func InstallHook(path string, entry HookEntry) (bool, error) {
 		return false, err
 	}
 
+	event := entry.eventName()
 	hooks := asStringMap(cfg["hooks"])
-	sessionStart := asAnyList(hooks["SessionStart"])
+	groups := asAnyList(hooks[event])
 	desired := hookGroupFor(entry)
 
-	if groupIndex(sessionStart, entry) >= 0 {
+	if groupIndex(groups, entry) >= 0 {
 		return false, nil
 	}
-	sessionStart = append(sessionStart, desired)
-	hooks["SessionStart"] = sessionStart
+	groups = append(groups, desired)
+	hooks[event] = groups
 	cfg["hooks"] = hooks
 
 	data, err := encodeJSON(cfg)
@@ -66,8 +78,9 @@ func InstallHook(path string, entry HookEntry) (bool, error) {
 	return true, writeAtomic(path, data)
 }
 
-// UninstallHook removes any SessionStart hook group whose matcher and command
-// match entry. Returns changed=true if the file was rewritten.
+// UninstallHook removes any hook group under entry's event slot whose
+// matcher and command match entry. Returns changed=true if the file was
+// rewritten.
 func UninstallHook(path string, entry HookEntry) (bool, error) {
 	cfg, err := readSettings(path)
 	if err != nil {
@@ -76,18 +89,19 @@ func UninstallHook(path string, entry HookEntry) (bool, error) {
 		}
 		return false, err
 	}
+	event := entry.eventName()
 	hooks := asStringMap(cfg["hooks"])
-	sessionStart := asAnyList(hooks["SessionStart"])
+	groups := asAnyList(hooks[event])
 
-	idx := groupIndex(sessionStart, entry)
+	idx := groupIndex(groups, entry)
 	if idx < 0 {
 		return false, nil
 	}
-	sessionStart = append(sessionStart[:idx], sessionStart[idx+1:]...)
-	if len(sessionStart) == 0 {
-		delete(hooks, "SessionStart")
+	groups = append(groups[:idx], groups[idx+1:]...)
+	if len(groups) == 0 {
+		delete(hooks, event)
 	} else {
-		hooks["SessionStart"] = sessionStart
+		hooks[event] = groups
 	}
 	if len(hooks) == 0 {
 		delete(cfg, "hooks")
@@ -102,15 +116,15 @@ func UninstallHook(path string, entry HookEntry) (bool, error) {
 	return true, writeAtomic(path, data)
 }
 
-// IsHookInstalled reports whether settings.json has a SessionStart group
-// matching entry.
+// IsHookInstalled reports whether settings.json has a hook group under the
+// event slot matching entry.
 func IsHookInstalled(path string, entry HookEntry) bool {
 	cfg, err := readSettings(path)
 	if err != nil {
 		return false
 	}
 	hooks := asStringMap(cfg["hooks"])
-	return groupIndex(asAnyList(hooks["SessionStart"]), entry) >= 0
+	return groupIndex(asAnyList(hooks[entry.eventName()]), entry) >= 0
 }
 
 func readSettings(path string) (map[string]any, error) {

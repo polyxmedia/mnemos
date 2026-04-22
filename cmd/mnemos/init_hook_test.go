@@ -71,6 +71,38 @@ func TestRunInitWiresHookForClaudeCode(t *testing.T) {
 	}
 }
 
+func TestRunInitWiresUserPromptSubmitHookForClaudeCode(t *testing.T) {
+	home := setupClaudeCodeHome(t)
+
+	out := captureStdout(t, func() {
+		if err := runInit(context.Background(), nil); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	})
+	if !strings.Contains(out, "UserPromptSubmit hook wired") {
+		t.Errorf("expected UserPromptSubmit hook wired line, got: %s", out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse settings.json: %v", err)
+	}
+	hooks := cfg["hooks"].(map[string]any)
+	groups, ok := hooks["UserPromptSubmit"].([]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected exactly one UserPromptSubmit group, got %v", groups)
+	}
+	inner := groups[0].(map[string]any)["hooks"].([]any)
+	cmd := inner[0].(map[string]any)["command"].(string)
+	if !strings.HasSuffix(cmd, "hook user-prompt") {
+		t.Errorf("UserPromptSubmit command should end with 'hook user-prompt', got %q", cmd)
+	}
+}
+
 func TestRunInitHookIsIdempotent(t *testing.T) {
 	setupClaudeCodeHome(t)
 

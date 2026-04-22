@@ -77,3 +77,15 @@ func (s *Service) Recent(ctx context.Context, agentID string, limit int) ([]Sess
 func (s *Service) Current(ctx context.Context, agentID string) (*Session, error) {
 	return s.store.Current(ctx, agentID)
 }
+
+// SetGoalIfEmpty backfills the goal on a still-open session that has none.
+// If goal is empty, or the session is missing, closed, or already has a
+// goal, the call is a silent no-op. The UserPromptSubmit hook relies on
+// this to be idempotent across repeated user prompts.
+func (s *Service) SetGoalIfEmpty(ctx context.Context, id, goal string) error {
+	goal = strings.TrimSpace(goal)
+	if id == "" || goal == "" {
+		return nil
+	}
+	return s.store.SetGoalIfEmpty(ctx, id, goal)
+}

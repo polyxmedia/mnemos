@@ -53,6 +53,7 @@ var commands = map[string]handler{
 	"skill":     runSkill,
 	"replay":    runReplay,
 	"prewarm":   runPrewarm,
+	"hook":      runHook,
 	"version":   runVersion,
 	"config":    runConfig,
 	"init":      runInit,

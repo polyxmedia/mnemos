@@ -72,4 +72,9 @@ type Store interface {
 	Close(ctx context.Context, in CloseInput) error
 	Recent(ctx context.Context, agentID string, limit int) ([]Session, error)
 	Current(ctx context.Context, agentID string) (*Session, error)
+	// SetGoalIfEmpty fills in the goal only when the session has none yet
+	// and is still open. No-op (and nil error) when either guard fails.
+	// Used by the UserPromptSubmit hook so the first real user prompt
+	// becomes the goal of an otherwise-anonymous prewarmed session.
+	SetGoalIfEmpty(ctx context.Context, id, goal string) error
 }

@@ -114,6 +114,27 @@ func (s *sessStore) Recent(ctx context.Context, agentID string, limit int) ([]se
 	return out, rows.Err()
 }
 
+// SetGoalIfEmpty updates goal only when the session is still open (ended_at
+// IS NULL) and has no goal yet (NULL or empty string). A missed update is
+// not an error — the UserPromptSubmit hook calls this on every prompt and
+// only the first should land.
+func (s *sessStore) SetGoalIfEmpty(ctx context.Context, id, goal string) error {
+	if id == "" || goal == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE sessions
+		   SET goal = ?
+		 WHERE id = ?
+		   AND ended_at IS NULL
+		   AND (goal IS NULL OR goal = '')`,
+		goal, id)
+	if err != nil {
+		return fmt.Errorf("set goal: %w", err)
+	}
+	return nil
+}
+
 func (s *sessStore) Current(ctx context.Context, agentID string) (*session.Session, error) {
 	args := []any{}
 	query := `SELECT ` + sessColumns + ` FROM sessions WHERE ended_at IS NULL`
