@@ -16,26 +16,23 @@ Open work on Mnemos. Pick anything here and ship it. If you want to claim an ite
 
 ## Invocation reliability — make sure mnemos is called at the right time
 
-Claude Code exposes ~26 hook events; we ship 3. A memory system nobody invokes is zero value regardless of schema quality, so this layer gates everything downstream.
+Claude Code exposes ~26 hook events; we ship 7, spanning passive (SessionStart, UserPromptSubmit, PostToolUse, SessionEnd, PreCompact, PostCompact) and blocking (PreToolUse guardrail). A memory system nobody invokes is zero value regardless of schema quality, so this layer gates everything downstream.
 
 **Shipped**
 
 - [x] `SessionStart` → `mnemos prewarm` (passive context injection)
 - [x] `UserPromptSubmit` → `mnemos hook user-prompt` (backfills session goal from the first prompt — kills the "agent skipped mnemos_session_start on editing tasks" failure mode)
 - [x] `PostToolUse` (`Edit|Write|MultiEdit|NotebookEdit`) → `mnemos hook post-tool` (passive file-touch capture; the heat map no longer depends on the agent remembering to call `mnemos_touch`)
+- [x] `SessionEnd` → `mnemos hook session-end` (auto-closes with derived summary; reason-mapped status: `prompt_input_exit` → `StatusAbandoned`, `bypass_permissions_disabled` → `StatusBlocked`, everything else → `StatusOK`)
+- [x] `PreCompact` / `PostCompact` → `mnemos hook pre-compact` / `post-compact` (emits a recovery block to stderr — `PreCompact`'s stderr is fed back to Claude so mnemos state survives compaction instead of being silently dropped for one turn)
+- [x] **First blocking-hook** — `PreToolUse` matched on `mcp__mnemos__mnemos_save|mnemos_correct|mnemos_convention` runs the safety scanner; exit 2 with stderr feedback when a RiskHigh prompt-injection pattern is detected. Opens the exit-2-stderr guardrail pattern.
 
-**Next (all straight drop-ins, no design work)**
+**Next blockers — extend the exit-2-stderr guardrail pattern**
 
-- [ ] **`SessionEnd` hook** — carries a `reason` field (`logout` | `clear` | `resume` | `prompt_input_exit` | `bypass_permissions_disabled` | `other`). Close any open mnemos session for the cwd with a derived summary. Native event for session close — not `Stop` (per-turn) and not `SessionStart`-cleanup-on-next-launch (lazy).
-- [ ] **`PreCompact` / `PostCompact` hooks** — we already have `prewarm --mode=compaction_recovery`, but it only fires reactively on the next `SessionStart`. Hook `PreCompact` to dump a proactive snapshot before context is lost, and `PostCompact` to re-prewarm immediately. Closes the one-turn gap where the agent is working on freshly-compacted context without mnemos restored.
+The safety-scanner guardrail on `mnemos_save` / `_correct` / `_convention` proved the pattern. Remaining hooks that would turn memory from "hint the agent may ignore" into active enforcement:
 
-**Bigger — the blocking-hook pattern we haven't used at all**
-
-Claude Code hooks can exit 2 with stderr that **feeds back into Claude's context**. All our hooks today are passive (exit 0, record something). The blocking pattern turns memory from "hint the agent may ignore" into an active guardrail:
-
-- [ ] **Blocking-hook demo** — ship one concrete blocker to compose the pattern. Candidate: `PreToolUse` matched on `Bash`, blocks `git commit` commands whose message carries AI attribution phrasing when the project has a stored correction against it. Narrow, demonstrable, opens the door.
-- [ ] **`PreToolUse` on `mcp__mnemos__mnemos_save` / `_correct`** — scan incoming content for injection before it lands in the store. This is Bet 2's quarantine tier shipping at the hook layer, much earlier than the full provenance work.
-- [ ] **`PreToolUse` on `Edit` / `Write`** — if an active correction contradicts the pattern being introduced, surface it via stderr (fed to Claude) so the agent self-corrects before the file is written. Highest-leverage use of the memory store.
+- [ ] **`PreToolUse` on `Bash` for `git commit`** — block commits whose message carries AI attribution phrasing when the project has a stored correction against it. The attribution-free-commits correction is already in user memory; this hook makes the rule actually land instead of relying on the agent to remember.
+- [ ] **`PreToolUse` on `Edit` / `Write`** — if an active correction contradicts the pattern being introduced, surface it via stderr (fed to Claude) so the agent self-corrects before the file is written. Highest-leverage use of the memory store once correction→pattern matching exists.
 - [ ] **`TaskCreated` / `TaskCompleted`** — gate on rumination queue for the topic; surface high-severity candidates before the agent commits to an approach.
 - [ ] **`SubagentStart` / `SubagentStop`** — cascade subagent learnings back to the parent session so corrections made inside a subagent don't get lost.
 

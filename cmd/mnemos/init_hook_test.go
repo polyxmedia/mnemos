@@ -196,6 +196,38 @@ func TestRunInitWiresPreToolGuardrailForClaudeCode(t *testing.T) {
 	}
 }
 
+func TestRunInitWiresCompactionHooksForClaudeCode(t *testing.T) {
+	home := setupClaudeCodeHome(t)
+
+	out := captureStdout(t, func() {
+		if err := runInit(context.Background(), nil); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	})
+	for _, want := range []string{"PreCompact hook wired", "PostCompact hook wired"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in init output: %s", want, out)
+		}
+	}
+
+	data, _ := os.ReadFile(filepath.Join(home, "settings.json"))
+	var cfg map[string]any
+	_ = json.Unmarshal(data, &cfg)
+	hooks := cfg["hooks"].(map[string]any)
+	for _, event := range []string{"PreCompact", "PostCompact"} {
+		groups, ok := hooks[event].([]any)
+		if !ok || len(groups) != 1 {
+			t.Fatalf("expected one %s group, got %v", event, groups)
+		}
+		inner := groups[0].(map[string]any)["hooks"].([]any)
+		cmd := inner[0].(map[string]any)["command"].(string)
+		wantSuffix := strings.ToLower(strings.ReplaceAll(event, "Compact", "-compact"))
+		if !strings.HasSuffix(cmd, "hook "+wantSuffix) {
+			t.Errorf("%s command should end with %q, got %q", event, "hook "+wantSuffix, cmd)
+		}
+	}
+}
+
 func TestRunInitHookIsIdempotent(t *testing.T) {
 	setupClaudeCodeHome(t)
 

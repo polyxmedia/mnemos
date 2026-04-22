@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -532,6 +533,99 @@ func TestSanitizeReasonDefaultsUnknown(t *testing.T) {
 	if got := sanitizeReason("logout"); got != "logout" {
 		t.Errorf("non-empty reason must pass through, got %q", got)
 	}
+}
+
+func TestEmitCompactionRecoveryBlockIncludesSessionContext(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	// Seed a session with a goal and a couple of observations so there is
+	// actually something to recover.
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	sess, err := d.sess.Open(ctx, session.OpenInput{Project: "mnemos", Goal: "ship compaction hooks"})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	if _, err := d.mem.Save(ctx, memory.SaveInput{
+		Title:     "we chose pure-Go sqlite driver",
+		Content:   "modernc.org/sqlite keeps us CGO-free",
+		Project:   "mnemos",
+		Type:      memory.TypeDecision,
+		SessionID: sess.ID,
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	d.close()
+
+	var buf bytes.Buffer
+	withStdin(t, `{"hook_event_name":"PreCompact"}`, func() {
+		emitCompactionRecoveryBlock(ctx, &buf, "PreCompact")
+	})
+
+	got := buf.String()
+	if !strings.Contains(got, "[mnemos PreCompact — recovery block]") {
+		t.Errorf("output missing event header, got: %s", got)
+	}
+	if got == "[mnemos PreCompact — recovery block]\n\n" || strings.TrimSpace(got) == "[mnemos PreCompact — recovery block]" {
+		t.Errorf("recovery block should carry actual content, got: %q", got)
+	}
+}
+
+func TestEmitCompactionRecoveryBlockSilentWhenNothingToSay(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	// No session, no observations — prewarm returns an empty block and the
+	// hook should stay silent rather than emit a bare header.
+	var buf bytes.Buffer
+	withStdin(t, `{"hook_event_name":"PreCompact"}`, func() {
+		emitCompactionRecoveryBlock(ctx, &buf, "PreCompact")
+	})
+	if buf.Len() != 0 {
+		t.Errorf("empty store must produce no output, got: %q", buf.String())
+	}
+}
+
+func TestHookPreCompactDispatchesCleanly(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	// Empty stdin — hook should no-op silently and return nil.
+	withStdin(t, ``, func() {
+		if err := runHookPreCompact(ctx, nil); err != nil {
+			t.Errorf("pre-compact must not error on empty stdin: %v", err)
+		}
+	})
+}
+
+func TestHookPostCompactDispatchesCleanly(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	withStdin(t, ``, func() {
+		if err := runHookPostCompact(ctx, nil); err != nil {
+			t.Errorf("post-compact must not error on empty stdin: %v", err)
+		}
+	})
+}
+
+func TestRunHookDispatcherRoutesCompactEvents(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	withStdin(t, ``, func() {
+		if err := runHook(ctx, []string{"pre-compact"}); err != nil {
+			t.Errorf("pre-compact route must not error: %v", err)
+		}
+	})
+	withStdin(t, ``, func() {
+		if err := runHook(ctx, []string{"post-compact"}); err != nil {
+			t.Errorf("post-compact route must not error: %v", err)
+		}
+	})
 }
 
 func TestHookUserPromptEmptyPromptIsSilent(t *testing.T) {

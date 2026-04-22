@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
@@ -34,6 +36,10 @@ func runHook(ctx context.Context, args []string) error {
 		return runHookSessionEnd(ctx, rest)
 	case "pre-tool":
 		return runHookPreTool(ctx, rest)
+	case "pre-compact":
+		return runHookPreCompact(ctx, rest)
+	case "post-compact":
+		return runHookPostCompact(ctx, rest)
 	default:
 		return fmt.Errorf("unknown hook: %s", sub)
 	}
@@ -370,6 +376,79 @@ func walkStrings(v any, dst *[]string) {
 			walkStrings(x[k], dst)
 		}
 	}
+}
+
+// runHookPreCompact handles Claude Code's PreCompact event. Emits a
+// prewarm recovery block to stderr, which Claude Code feeds back into
+// the model's context — so mnemos state survives through the compaction
+// instead of being silently dropped. Without this, the agent keeps
+// working for at least one more turn on context that has lost all
+// mnemos observations, touches, and session goal.
+func runHookPreCompact(ctx context.Context, _ []string) error {
+	emitCompactionRecoveryBlock(ctx, os.Stderr, "PreCompact")
+	return nil
+}
+
+// runHookPostCompact handles Claude Code's PostCompact event. Emits the
+// same block to stderr for terminal visibility; unlike PreCompact,
+// PostCompact stderr is shown to the user only (not fed back to Claude).
+// The side effect a future Claude Code release might surface it; today
+// the primary value is a transcript-level record that compaction
+// happened and what mnemos looked like at that moment.
+func runHookPostCompact(ctx context.Context, _ []string) error {
+	emitCompactionRecoveryBlock(ctx, os.Stderr, "PostCompact")
+	return nil
+}
+
+// emitCompactionRecoveryBlock composes a prewarm block in the compaction-
+// recovery mode and writes it to w with a header naming the event. w is
+// injected so tests can capture the output without going through stderr.
+// Failure is always silent at the caller: a hook must not fail loudly.
+func emitCompactionRecoveryBlock(ctx context.Context, w io.Writer, event string) {
+	in := readHookStdin(os.Stdin)
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook "+strings.ToLower(event)+":", err)
+		return
+	}
+	defer d.close()
+
+	cwd := in.CWD
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
+	proj := ""
+	if cwd != "" {
+		proj = filepath.Base(cwd)
+	}
+
+	var sessID string
+	if sess, err := d.sess.Current(ctx, ""); err == nil && sess != nil {
+		sessID = sess.ID
+	} else if err != nil && !errors.Is(err, session.ErrNotFound) {
+		fmt.Fprintln(os.Stderr, "mnemos hook "+strings.ToLower(event)+":", err)
+	}
+
+	pw := prewarm.NewService(prewarm.Config{
+		Observations: d.db.Observations(),
+		Sessions:     d.db.Sessions(),
+		Skills:       d.db.Skills(),
+		Touches:      d.db.Touches(),
+		Rumination:   d.rum,
+	})
+	block, err := pw.Build(ctx, prewarm.Request{
+		Mode:      prewarm.ModeCompactionRecovery,
+		Project:   proj,
+		SessionID: sessID,
+	})
+	if err != nil || block == nil || block.Text == "" {
+		return
+	}
+
+	fmt.Fprintf(w, "[mnemos %s — recovery block]\n%s\n", event, block.Text)
 }
 
 // uniqueRuleNames deduplicates the rule names from the findings while

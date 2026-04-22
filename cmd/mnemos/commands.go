@@ -383,6 +383,22 @@ func runInit(_ context.Context, _ []string) error {
 					Timeout: 5,
 				},
 			},
+			{
+				label: "Claude Code PreCompact hook",
+				entry: installer.HookEntry{
+					Event:   "PreCompact",
+					Command: fmt.Sprintf("%s hook pre-compact", selfPath),
+					Timeout: 10,
+				},
+			},
+			{
+				label: "Claude Code PostCompact hook",
+				entry: installer.HookEntry{
+					Event:   "PostCompact",
+					Command: fmt.Sprintf("%s hook post-compact", selfPath),
+					Timeout: 10,
+				},
+			},
 		}
 		for _, h := range hookEntries {
 			changed, err := installer.InstallHook(settings, h.entry)
@@ -472,6 +488,14 @@ func runDoctor(ctx context.Context, _ []string) error {
 				Event:   "PreToolUse",
 				Matcher: "mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention",
 				Command: fmt.Sprintf("%s hook pre-tool", selfPath),
+			}},
+			{"Claude Code PreCompact hook", installer.HookEntry{
+				Event:   "PreCompact",
+				Command: fmt.Sprintf("%s hook pre-compact", selfPath),
+			}},
+			{"Claude Code PostCompact hook", installer.HookEntry{
+				Event:   "PostCompact",
+				Command: fmt.Sprintf("%s hook post-compact", selfPath),
 			}},
 		}
 		for _, h := range doctorHooks {
