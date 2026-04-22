@@ -61,11 +61,13 @@ func runServe(ctx context.Context, args []string) error {
 	})
 	sess := session.NewService(session.Config{Store: db.Sessions()})
 	skl := skills.NewService(skills.Config{Store: db.Skills()})
+	rum := newRumination(cfg, db, skl)
 	pw := prewarm.NewService(prewarm.Config{
 		Observations: db.Observations(),
 		Sessions:     db.Sessions(),
 		Skills:       db.Skills(),
 		Touches:      db.Touches(),
+		Rumination:   rum,
 		MaxTokens:    500,
 	})
 
@@ -94,7 +96,6 @@ func runServe(ctx context.Context, args []string) error {
 		return httpSrv.Serve(ctx, addr)
 	}
 
-	rum := newRumination(cfg, db, skl)
 	srv := mcp.NewServer(mcp.Config{
 		Name:       "mnemos",
 		Version:    version.Version,

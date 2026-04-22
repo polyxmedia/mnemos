@@ -77,6 +77,7 @@ func runPrewarm(ctx context.Context, args []string) error {
 		Sessions:     d.db.Sessions(),
 		Skills:       d.db.Skills(),
 		Touches:      d.db.Touches(),
+		Rumination:   d.rum,
 	})
 
 	var sessID string

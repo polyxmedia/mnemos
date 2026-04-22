@@ -118,10 +118,53 @@ Find skills matching a query. Effectiveness (success/use ratio) nudges ranking s
 ### `mnemos_skill_save`
 Save or version a reusable procedure. Keyed by `(agent_id, name)` — same name bumps `version`.
 
+## Rumination
+
+Four tools, exposed only when `[rumination].enabled = true` in config (the default). The pattern:
+
+1. `mnemos_ruminate_list` → pick a candidate ID from the pending queue
+2. `mnemos_ruminate_pack(id)` → read the review block, answer the hostile prompts
+3. `mnemos_ruminate_resolve(id, resolved_by, why_better)` OR `mnemos_ruminate_dismiss(id, reason)`
+
+Server-side validation enforces Popper's falsifiability guard at the resolve boundary: `why_better` must name a new prediction the revision makes. Cosmetic rewording is rejected.
+
+### `mnemos_ruminate_list`
+Return pending rumination candidates ordered severity-desc, detected-at-desc. Each candidate has `id`, `monitor`, `severity`, `reason`, `target_kind`, `target_id`, `detected_at`, `evidence_n`. Response also includes `counts` (pending / resolved / dismissed totals) so the agent can report store health at a glance.
+
+| Parameter | Notes |
+| --- | --- |
+| `limit` | optional; 0 = all |
+
+### `mnemos_ruminate_pack`
+Fetch the full review block for one candidate: hypothesis verbatim, disconfirming evidence, falsifiable restatement, hostile-review prompts (steel-man → fatal flaw → falsification vs noise → context shift → new prediction), and an action section naming the provenance tag the revision must carry.
+
+| Parameter | Notes |
+| --- | --- |
+| `id` | required — candidate ID from `mnemos_ruminate_list` |
+
+### `mnemos_ruminate_resolve`
+Close a candidate by naming the revision that replaces the flagged belief.
+
+| Parameter | Notes |
+| --- | --- |
+| `id` | required |
+| `resolved_by` | required — ID of the new skill version or superseding observation |
+| `why_better` | required, min 16 chars — one sentence naming a concrete new prediction the revision makes that the old version did not. The Popper guard. |
+
+Idempotent when called a second time with the same `resolved_by`. Rejects attempts to resolve an already-resolved candidate with a different `resolved_by` (that's a conflict; either the store is wrong or the agent is).
+
+### `mnemos_ruminate_dismiss`
+Close a candidate as noise. The rule stands.
+
+| Parameter | Notes |
+| --- | --- |
+| `id` | required |
+| `reason` | required, min 8 chars — why the evidence was insufficient to force a revision. Preserved so a later dream pass does not re-raise the same flag without context. |
+
 ## Stats
 
 ### `mnemos_stats`
-Counts, top tags, recent sessions.
+Counts, top tags, recent sessions. When rumination is enabled, the response also includes a `rumination` object with `pending`, `resolved`, and `dismissed` counts.
 
 ## Resources
 

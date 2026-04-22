@@ -131,6 +131,17 @@ func (s *Service) Pending(ctx context.Context, limit int) ([]Candidate, error) {
 	return s.store.Pending(ctx, limit)
 }
 
+// Get returns one candidate by ID. Thin passthrough — exposed so callers
+// that need to inspect state before a mutation (e.g. dream auto-resolve
+// checking whether a candidate is still pending) don't have to scan the
+// Pending list.
+func (s *Service) Get(ctx context.Context, id string) (*Candidate, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("rumination: store not configured")
+	}
+	return s.store.Get(ctx, id)
+}
+
 // PendingByTarget is the prewarm hook — it answers "is there a live
 // rumination against the skill or observation I'm about to surface?".
 func (s *Service) PendingByTarget(ctx context.Context, kind TargetKind, targetID string) ([]Candidate, error) {

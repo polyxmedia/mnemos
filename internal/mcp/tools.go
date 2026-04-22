@@ -553,6 +553,15 @@ func (s *Server) handleStats(ctx context.Context, _ *mcpsdk.CallToolRequest, _ s
 			out["storage_bytes"] = size
 		}
 	}
+	if s.cfg.Rumination != nil {
+		if c, err := s.cfg.Rumination.Counts(ctx); err == nil {
+			out["rumination"] = map[string]any{
+				"pending":   c.Pending,
+				"resolved":  c.Resolved,
+				"dismissed": c.Dismissed,
+			}
+		}
+	}
 	return jsonResult(out)
 }
 

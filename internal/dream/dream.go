@@ -39,9 +39,12 @@ type Journal struct {
 	// Ruminated counts candidates raised by the rumination detection
 	// monitors on this pass. Inserted = fresh breaches; Updated = repeat
 	// detections of a still-pending candidate whose severity or evidence
-	// shifted.
+	// shifted. Resolved = candidates auto-closed because a skill or
+	// observation carrying a `ruminated-from:<id>` tag was found in the
+	// store.
 	RuminatedInserted int
 	RuminatedUpdated  int
+	RuminatedResolved int
 
 	Notes []string
 }
@@ -54,7 +57,8 @@ func (j Journal) Summary() string {
 	fmt.Fprintf(&b, "- decayed: %d\n", j.Decayed)
 	fmt.Fprintf(&b, "- linked: %d\n", j.Linked)
 	fmt.Fprintf(&b, "- promoted: %d\n", j.Promoted)
-	fmt.Fprintf(&b, "- ruminated: %d new, %d updated\n", j.RuminatedInserted, j.RuminatedUpdated)
+	fmt.Fprintf(&b, "- ruminated: %d new, %d updated, %d auto-resolved\n",
+		j.RuminatedInserted, j.RuminatedUpdated, j.RuminatedResolved)
 	for _, n := range j.Notes {
 		fmt.Fprintf(&b, "- %s\n", n)
 	}
@@ -160,6 +164,14 @@ func (s *Service) Run(ctx context.Context, writeJournal bool) (*Journal, error) 
 			j.RuminatedInserted = ins
 			j.RuminatedUpdated = upd
 		}
+		// 5. Auto-resolve candidates whose target carries the provenance
+		// tag. Runs after detection so a freshly-raised candidate can be
+		// closed in the same pass if the revision already landed.
+		if closed, err := s.autoResolveRuminations(ctx); err != nil {
+			s.log.Warn("rumination auto-resolve", "err", err)
+		} else {
+			j.RuminatedResolved = closed
+		}
 	}
 
 	j.FinishedAt = time.Now().UTC()
@@ -167,14 +179,16 @@ func (s *Service) Run(ctx context.Context, writeJournal bool) (*Journal, error) 
 	s.log.Info("dream pass",
 		"pruned", j.Pruned, "decayed", j.Decayed, "linked", j.Linked,
 		"promoted", j.Promoted,
-		"ruminated_new", j.RuminatedInserted, "ruminated_upd", j.RuminatedUpdated,
+		"ruminated_new", j.RuminatedInserted,
+		"ruminated_upd", j.RuminatedUpdated,
+		"ruminated_res", j.RuminatedResolved,
 		"duration", j.FinishedAt.Sub(j.StartedAt))
 
 	// 3. Write the dream journal as a memory observation so the agent can
 	// retrieve it via standard search. Guarded because callers may run
 	// consolidation frequently and don't always want an observation per run.
 	if writeJournal && (j.Pruned > 0 || j.Decayed > 0 || j.Linked > 0 || j.Promoted > 0 ||
-		j.RuminatedInserted > 0 || j.RuminatedUpdated > 0) {
+		j.RuminatedInserted > 0 || j.RuminatedUpdated > 0 || j.RuminatedResolved > 0) {
 		_, err := s.mem.Save(ctx, memory.SaveInput{
 			Title:      "dream pass " + j.StartedAt.Format("2006-01-02 15:04"),
 			Content:    j.Summary(),

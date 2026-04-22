@@ -15,31 +15,47 @@ import (
 	"time"
 
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/rumination"
 	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
+
+// RuminationReader is the narrow surface prewarm needs from the rumination
+// service: a queue pull (for the dedicated section) and a target lookup
+// (for inline badges on matching skills). Declared at the consumer so
+// tests can supply a minimal fake without touching the SQLite-backed
+// store or dragging in the full rumination.Service.
+type RuminationReader interface {
+	Pending(ctx context.Context, limit int) ([]rumination.Candidate, error)
+	PendingByTarget(ctx context.Context, kind rumination.TargetKind, targetID string) ([]rumination.Candidate, error)
+}
 
 // Service builds pre-warm blocks. It depends on the read-side of the
 // observation store plus the session/skill readers and the safety scanner.
 // Writes are not needed here, so we accept memory.Reader — narrower is
 // easier to mock and harder to misuse.
 type Service struct {
-	obs       memory.Reader
-	sessions  session.Store
-	skills    skills.Store
-	touches   memory.TouchStore
-	scanner   *safety.Scanner
-	maxTokens int
+	obs        memory.Reader
+	sessions   session.Store
+	skills     skills.Store
+	touches    memory.TouchStore
+	scanner    *safety.Scanner
+	rumination RuminationReader
+	maxTokens  int
 }
 
-// Config bundles dependencies.
+// Config bundles dependencies. Rumination is optional; when nil the
+// prewarm block omits the "pending reviews" section and skips the skill
+// badge lookup quietly, so upgrading mnemos never breaks existing callers
+// that did not yet wire the rumination service.
 type Config struct {
 	Observations memory.Reader
 	Sessions     session.Store
 	Skills       skills.Store
 	Touches      memory.TouchStore
 	Scanner      *safety.Scanner
+	Rumination   RuminationReader
 	MaxTokens    int
 }
 
@@ -54,12 +70,13 @@ func NewService(cfg Config) *Service {
 		cfg.Scanner = safety.NewScanner()
 	}
 	return &Service{
-		obs:       cfg.Observations,
-		sessions:  cfg.Sessions,
-		skills:    cfg.Skills,
-		touches:   cfg.Touches,
-		scanner:   cfg.Scanner,
-		maxTokens: cfg.MaxTokens,
+		obs:        cfg.Observations,
+		sessions:   cfg.Sessions,
+		skills:     cfg.Skills,
+		touches:    cfg.Touches,
+		scanner:    cfg.Scanner,
+		rumination: cfg.Rumination,
+		maxTokens:  cfg.MaxTokens,
 	}
 }
 
@@ -184,18 +201,48 @@ func (s *Service) pipeline(mode Mode) []stepFunc {
 			stepCurrentSession,
 			stepInSessionObservations,
 			stepConventions,
+			stepPendingRumination,
 			stepCorrections,
 			stepHotFiles,
 		}
 	default: // ModeSessionStart
 		return []stepFunc{
 			stepConventions,
+			stepPendingRumination,
 			stepRecentSessions,
 			stepMatchingSkills,
 			stepCorrections,
 			stepHotFiles,
 		}
 	}
+}
+
+// stepPendingRumination surfaces the top pending rumination candidates so
+// the agent sees them before picking a skill or acting on a convention.
+// We cap at 3 — any more and it starts crowding out the conventions block
+// it sits next to. Severity already sorts highest-first in the store query.
+func stepPendingRumination(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
+	draft := sectionDraft{title: "pending reviews"}
+	if s.rumination == nil {
+		return draft, nil
+	}
+	cands, err := s.rumination.Pending(ctx, 3)
+	if err != nil {
+		// Non-fatal: rumination surface is best-effort. The rest of the
+		// prewarm must still assemble even if the queue read fails.
+		return draft, nil
+	}
+	if len(cands) == 0 {
+		return draft, nil
+	}
+	var b strings.Builder
+	for _, c := range cands {
+		fmt.Fprintf(&b, "- [%s] %s · %s (id: %s)\n",
+			c.Severity, c.MonitorName, oneLine(c.Reason), c.ID)
+	}
+	b.WriteString("\nResolve via mnemos_ruminate_pack <id> then mnemos_ruminate_resolve | _dismiss.")
+	draft.body = b.String()
+	return draft, nil
 }
 
 func stepConventions(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
@@ -285,6 +332,15 @@ func stepMatchingSkills(ctx context.Context, s *Service, req Request) (sectionDr
 		b.WriteString(m.Skill.Name)
 		b.WriteString(": ")
 		b.WriteString(oneLine(m.Skill.Description))
+		// Inline badge when the skill is under active rumination. The
+		// agent then knows not to just follow the procedure — it has to
+		// either resolve the candidate first or acknowledge the flag.
+		if s.rumination != nil {
+			pending, err := s.rumination.PendingByTarget(ctx, rumination.TargetSkill, m.Skill.ID)
+			if err == nil && len(pending) > 0 {
+				fmt.Fprintf(&b, " [rumination pending: %s]", pending[0].ID)
+			}
+		}
 		b.WriteString("\n")
 	}
 	return sectionDraft{title: "applicable skills", body: strings.TrimRight(b.String(), "\n")}, nil

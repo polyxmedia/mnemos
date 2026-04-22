@@ -59,17 +59,28 @@ func newRumination(cfg config.Config, db *storage.DB, skl *skills.Service) *rumi
 	if !cfg.Rumination.Enabled {
 		return nil
 	}
-	return rumination.NewService(rumination.Config{
-		Monitors: []rumination.Monitor{
-			&rumination.SkillEffectivenessMonitor{
-				Skills:  skl,
-				Floor:   cfg.Rumination.SkillEffectivenessFloor,
-				MinUses: cfg.Rumination.SkillMinUses,
-			},
+	monitors := []rumination.Monitor{
+		&rumination.SkillEffectivenessMonitor{
+			Skills:  skl,
+			Floor:   cfg.Rumination.SkillEffectivenessFloor,
+			MinUses: cfg.Rumination.SkillMinUses,
 		},
-		Skills: skl,
-		Memory: db.Observations(),
-		Store:  db.Rumination(),
+		&rumination.StaleSkillMonitor{
+			Skills:           skl,
+			StaleDays:        cfg.Rumination.StaleSkillDays,
+			MaxEffectiveness: cfg.Rumination.StaleSkillFloor,
+		},
+		&rumination.CorrectionRepeatUnderSkillMonitor{
+			Corrections:     db.Observations(),
+			Skills:          skl,
+			RepeatThreshold: cfg.Rumination.CorrectionRepeatN,
+		},
+	}
+	return rumination.NewService(rumination.Config{
+		Monitors: monitors,
+		Skills:   skl,
+		Memory:   db.Observations(),
+		Store:    db.Rumination(),
 	})
 }
 
@@ -129,6 +140,12 @@ func runStats(ctx context.Context, _ []string) error {
 	fmt.Printf("sessions:          %d\n", st.Sessions)
 	fmt.Printf("skills:            %d (%d auto-promoted from corrections)\n",
 		len(skillList), promotedCount)
+	if d.rum != nil {
+		if c, err := d.rum.Counts(ctx); err == nil && (c.Pending+c.Resolved+c.Dismissed) > 0 {
+			fmt.Printf("rumination:        %d pending, %d resolved, %d dismissed\n",
+				c.Pending, c.Resolved, c.Dismissed)
+		}
+	}
 	if len(st.TopTags) > 0 {
 		fmt.Println("top tags:")
 		for _, t := range st.TopTags {

@@ -74,6 +74,9 @@ type RuminationConfig struct {
 	Enabled                 bool    `toml:"enabled"`
 	SkillEffectivenessFloor float64 `toml:"skill_effectiveness_floor"` // below this effectiveness → rumination candidate
 	SkillMinUses            int     `toml:"skill_min_uses"`            // must have been used at least this many times first
+	StaleSkillDays          int     `toml:"stale_skill_days"`          // skills untouched this many days and underperforming → candidate
+	StaleSkillFloor         float64 `toml:"stale_skill_floor"`         // staleness triggers when effectiveness is below this
+	CorrectionRepeatN       int     `toml:"correction_repeat_n"`       // N corrections on a topic *after* a matching skill was promoted → candidate
 }
 
 // Default returns the baked-in defaults — what you get on first run.
@@ -109,6 +112,9 @@ func Default() Config {
 			Enabled:                 true,
 			SkillEffectivenessFloor: 0.3,
 			SkillMinUses:            10,
+			StaleSkillDays:          90,
+			StaleSkillFloor:         0.5,
+			CorrectionRepeatN:       3,
 		},
 	}
 }
@@ -245,6 +251,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Rumination.SkillMinUses == 0 {
 		cfg.Rumination.SkillMinUses = d.Rumination.SkillMinUses
+	}
+	if cfg.Rumination.StaleSkillDays == 0 {
+		cfg.Rumination.StaleSkillDays = d.Rumination.StaleSkillDays
+	}
+	if cfg.Rumination.StaleSkillFloor == 0 {
+		cfg.Rumination.StaleSkillFloor = d.Rumination.StaleSkillFloor
+	}
+	if cfg.Rumination.CorrectionRepeatN == 0 {
+		cfg.Rumination.CorrectionRepeatN = d.Rumination.CorrectionRepeatN
 	}
 }
 
