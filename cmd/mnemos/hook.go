@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
 
@@ -24,6 +26,8 @@ func runHook(ctx context.Context, args []string) error {
 	switch sub {
 	case "user-prompt":
 		return runHookUserPrompt(ctx, rest)
+	case "post-tool":
+		return runHookPostTool(ctx, rest)
 	default:
 		return fmt.Errorf("unknown hook: %s", sub)
 	}
@@ -79,4 +83,84 @@ func truncateGoal(s string) string {
 		return s
 	}
 	return s[:maxAutoGoalChars-1] + "…"
+}
+
+// runHookPostTool handles Claude Code's PostToolUse event. For file-editing
+// tools (Edit / Write / MultiEdit / NotebookEdit), it records a passive
+// touch against the heat map so the store stays populated even when the
+// agent never calls mnemos_touch. Matcher filtering happens at the Claude
+// Code level; this command is defensive and no-ops on any other tool.
+//
+// The matcher we install (`Edit|Write|MultiEdit|NotebookEdit`) is an exact
+// alternation — the schema documents this as the format when the string has
+// no regex metacharacters but contains pipes.
+func runHookPostTool(ctx context.Context, _ []string) error {
+	in := readHookStdin(os.Stdin)
+	if !isFileEditTool(in.ToolName) {
+		return nil
+	}
+	path := filePathFromToolInput(in.ToolInput)
+	if path == "" {
+		return nil
+	}
+
+	cwd := in.CWD
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
+	proj := ""
+	if cwd != "" {
+		proj = filepath.Base(cwd)
+	}
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook post-tool:", err)
+		return nil
+	}
+	defer d.close()
+
+	// Best-effort session stamp. If nothing is open we still record the
+	// touch so the heat map does not lose data; SessionID just stays empty.
+	var sessID string
+	if sess, err := d.sess.Current(ctx, ""); err == nil && sess != nil {
+		sessID = sess.ID
+	} else if err != nil && !errors.Is(err, session.ErrNotFound) {
+		fmt.Fprintln(os.Stderr, "mnemos hook post-tool:", err)
+	}
+
+	if err := d.db.Touches().Record(ctx, memory.TouchInput{
+		Project:   proj,
+		Path:      path,
+		SessionID: sessID,
+		Note:      "auto:" + in.ToolName,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook post-tool:", err)
+	}
+	return nil
+}
+
+// isFileEditTool reports whether the Claude Code tool name is one we want
+// to record as a file touch. Kept as a set so adding new editing tools is
+// a one-liner.
+func isFileEditTool(name string) bool {
+	switch name {
+	case "Edit", "Write", "MultiEdit", "NotebookEdit":
+		return true
+	}
+	return false
+}
+
+// filePathFromToolInput extracts the file_path field common to Edit, Write,
+// MultiEdit, and NotebookEdit. Returns "" if absent or not a string.
+func filePathFromToolInput(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m["file_path"].(string); ok {
+		return v
+	}
+	return ""
 }

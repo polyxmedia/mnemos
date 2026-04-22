@@ -136,6 +136,74 @@ func TestHookUserPromptNoSessionIsSilent(t *testing.T) {
 	})
 }
 
+func TestHookPostToolRecordsTouchForEdit(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	_, err = d.sess.Open(ctx, session.OpenInput{Project: "mnemos"})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	d.close()
+
+	cwd := os.Getenv("HOME") + "/somewhere/mnemos"
+	_ = os.MkdirAll(cwd, 0o755)
+	payload := `{"hook_event_name":"PostToolUse","cwd":"` + cwd + `","tool_name":"Edit","tool_input":{"file_path":"internal/rumination/store.go","old_string":"x","new_string":"y"}}`
+	withStdin(t, payload, func() {
+		if err := runHookPostTool(ctx, nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	hot, err := d2.db.Touches().Hot(ctx, "", "mnemos", 10)
+	if err != nil {
+		t.Fatalf("hot: %v", err)
+	}
+	if len(hot) == 0 {
+		t.Fatal("expected at least one touch recorded")
+	}
+	if hot[0].Path != "internal/rumination/store.go" {
+		t.Errorf("expected touch for rumination/store.go, got %q", hot[0].Path)
+	}
+}
+
+func TestHookPostToolIgnoresNonEditTools(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}`
+	withStdin(t, payload, func() {
+		if err := runHookPostTool(ctx, nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+
+	d, _ := loadDeps(ctx)
+	defer d.close()
+	hot, _ := d.db.Touches().Hot(ctx, "", "", 10)
+	if len(hot) != 0 {
+		t.Errorf("non-edit tool must not record a touch, got %d", len(hot))
+	}
+}
+
+func TestHookPostToolSilentWhenFilePathMissing(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{}}`
+	withStdin(t, payload, func() {
+		if err := runHookPostTool(ctx, nil); err != nil {
+			t.Errorf("hook must not error on missing file_path: %v", err)
+		}
+	})
+}
+
 func TestHookUserPromptEmptyPromptIsSilent(t *testing.T) {
 	withHome(t)
 	ctx := context.Background()

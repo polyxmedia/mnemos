@@ -103,6 +103,40 @@ func TestRunInitWiresUserPromptSubmitHookForClaudeCode(t *testing.T) {
 	}
 }
 
+func TestRunInitWiresPostToolUseHookForClaudeCode(t *testing.T) {
+	home := setupClaudeCodeHome(t)
+
+	out := captureStdout(t, func() {
+		if err := runInit(context.Background(), nil); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	})
+	if !strings.Contains(out, "PostToolUse hook wired") {
+		t.Errorf("expected PostToolUse hook wired line, got: %s", out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings.json: %v", err)
+	}
+	var cfg map[string]any
+	_ = json.Unmarshal(data, &cfg)
+	hooks := cfg["hooks"].(map[string]any)
+	groups, ok := hooks["PostToolUse"].([]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected one PostToolUse group, got %v", groups)
+	}
+	group := groups[0].(map[string]any)
+	if group["matcher"] != "Edit|Write|MultiEdit|NotebookEdit" {
+		t.Errorf("unexpected PostToolUse matcher: %v", group["matcher"])
+	}
+	inner := group["hooks"].([]any)
+	cmd := inner[0].(map[string]any)["command"].(string)
+	if !strings.HasSuffix(cmd, "hook post-tool") {
+		t.Errorf("PostToolUse command should end with 'hook post-tool', got %q", cmd)
+	}
+}
+
 func TestRunInitHookIsIdempotent(t *testing.T) {
 	setupClaudeCodeHome(t)
 
