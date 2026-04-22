@@ -374,6 +374,15 @@ func runInit(_ context.Context, _ []string) error {
 					Timeout: 5,
 				},
 			},
+			{
+				label: "Claude Code PreToolUse guardrail",
+				entry: installer.HookEntry{
+					Event:   "PreToolUse",
+					Matcher: "mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention",
+					Command: fmt.Sprintf("%s hook pre-tool", selfPath),
+					Timeout: 5,
+				},
+			},
 		}
 		for _, h := range hookEntries {
 			changed, err := installer.InstallHook(settings, h.entry)
@@ -458,6 +467,11 @@ func runDoctor(ctx context.Context, _ []string) error {
 			{"Claude Code SessionEnd hook", installer.HookEntry{
 				Event:   "SessionEnd",
 				Command: fmt.Sprintf("%s hook session-end", selfPath),
+			}},
+			{"Claude Code PreToolUse guardrail", installer.HookEntry{
+				Event:   "PreToolUse",
+				Matcher: "mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention",
+				Command: fmt.Sprintf("%s hook pre-tool", selfPath),
 			}},
 		}
 		for _, h := range doctorHooks {

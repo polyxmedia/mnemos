@@ -164,6 +164,38 @@ func TestRunInitWiresSessionEndHookForClaudeCode(t *testing.T) {
 	}
 }
 
+func TestRunInitWiresPreToolGuardrailForClaudeCode(t *testing.T) {
+	home := setupClaudeCodeHome(t)
+
+	out := captureStdout(t, func() {
+		if err := runInit(context.Background(), nil); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	})
+	if !strings.Contains(out, "PreToolUse guardrail wired") {
+		t.Errorf("expected PreToolUse guardrail wired line, got: %s", out)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(home, "settings.json"))
+	var cfg map[string]any
+	_ = json.Unmarshal(data, &cfg)
+	hooks := cfg["hooks"].(map[string]any)
+	groups, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected one PreToolUse group, got %v", groups)
+	}
+	group := groups[0].(map[string]any)
+	want := "mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention"
+	if group["matcher"] != want {
+		t.Errorf("unexpected PreToolUse matcher: %v", group["matcher"])
+	}
+	inner := group["hooks"].([]any)
+	cmd := inner[0].(map[string]any)["command"].(string)
+	if !strings.HasSuffix(cmd, "hook pre-tool") {
+		t.Errorf("PreToolUse command should end with 'hook pre-tool', got %q", cmd)
+	}
+}
+
 func TestRunInitHookIsIdempotent(t *testing.T) {
 	setupClaudeCodeHome(t)
 

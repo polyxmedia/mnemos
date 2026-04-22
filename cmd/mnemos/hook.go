@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
 
@@ -30,6 +32,8 @@ func runHook(ctx context.Context, args []string) error {
 		return runHookPostTool(ctx, rest)
 	case "session-end":
 		return runHookSessionEnd(ctx, rest)
+	case "pre-tool":
+		return runHookPreTool(ctx, rest)
 	default:
 		return fmt.Errorf("unknown hook: %s", sub)
 	}
@@ -256,4 +260,129 @@ func sanitizeReason(r string) string {
 		return "unknown"
 	}
 	return r
+}
+
+// runHookPreTool handles Claude Code's PreToolUse event for mnemos write
+// tools. Runs the safety scanner over the tool_input payload; if an
+// elevated-risk prompt-injection pattern is detected, exits 2 with a
+// stderr message that Claude Code feeds back into the model's context.
+// Claude receives a specific reason to revise and the save never lands.
+//
+// This is mnemos defending its own writes — a slice of Bet 2's quarantined
+// tool-output tier, shipping at the hook layer well before the full
+// provenance work. Pattern composes: future PreToolUse hooks (correction-
+// collision on Edit, git-commit attribution, etc.) slot into the same
+// subcommand, same exit-code contract.
+func runHookPreTool(ctx context.Context, _ []string) error {
+	_ = ctx
+	msg, block := decidePreTool(readHookStdin(os.Stdin))
+	if !block {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, msg)
+	os.Exit(2)
+	return nil
+}
+
+// decidePreTool is the pure-function core of the PreToolUse guardrail.
+// Returns the stderr message to emit and whether Claude Code should be
+// told to block (exit 2). Extracted so tests can assert both paths
+// without spawning the binary just to observe an exit code.
+func decidePreTool(in hookInput) (string, bool) {
+	if !isMnemosWriteTool(in.ToolName) {
+		return "", false
+	}
+	text := gatherStringsFromToolInput(in.ToolInput)
+	if text == "" {
+		return "", false
+	}
+	report := safety.NewScanner().Scan(text)
+	if report.MaxRisk < safety.RiskHigh {
+		return "", false
+	}
+	rules := uniqueRuleNames(report.Findings)
+	return fmt.Sprintf(
+		"mnemos: blocked %s — detected prompt-injection pattern (risk=%s; rules: %s). Remove the flagged text or rephrase before retrying.",
+		shortToolName(in.ToolName), report.MaxRisk.String(), strings.Join(rules, ", "),
+	), true
+}
+
+// isMnemosWriteTool matches the MCP-namespaced names Claude Code assigns
+// to our write tools. The PreToolUse matcher we install already narrows
+// Claude's invocation, but the defensive check keeps this command safe
+// to invoke from elsewhere (tests, future shared guardrails).
+func isMnemosWriteTool(name string) bool {
+	switch name {
+	case "mcp__mnemos__mnemos_save",
+		"mcp__mnemos__mnemos_correct",
+		"mcp__mnemos__mnemos_convention":
+		return true
+	}
+	return false
+}
+
+// shortToolName strips the mcp__mnemos__ prefix for user-facing messages.
+func shortToolName(name string) string {
+	return strings.TrimPrefix(name, "mcp__mnemos__")
+}
+
+// gatherStringsFromToolInput flattens every string value in the tool_input
+// map (including strings inside list values) into one scannable blob. The
+// scanner looks for structural patterns, not natural language, so which
+// field a match came from does not matter — we want total coverage and
+// zero need to update this when the MCP tool schema gains a field.
+func gatherStringsFromToolInput(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	var out []string
+	// Stable order for deterministic tests.
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		walkStrings(m[k], &out)
+	}
+	return strings.Join(out, "\n")
+}
+
+// walkStrings appends every string found in v (a scalar, a slice, or a
+// nested map) to dst. Non-string scalars are ignored.
+func walkStrings(v any, dst *[]string) {
+	switch x := v.(type) {
+	case string:
+		if x != "" {
+			*dst = append(*dst, x)
+		}
+	case []any:
+		for _, e := range x {
+			walkStrings(e, dst)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			walkStrings(x[k], dst)
+		}
+	}
+}
+
+// uniqueRuleNames deduplicates the rule names from the findings while
+// keeping order stable for reproducible stderr messages.
+func uniqueRuleNames(findings []safety.Finding) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range findings {
+		if seen[f.Rule] {
+			continue
+		}
+		seen[f.Rule] = true
+		out = append(out, f.Rule)
+	}
+	return out
 }
