@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
 
@@ -392,6 +393,144 @@ func TestPreToolDecisionIgnoresMediumRisk(t *testing.T) {
 	}
 	if _, block := decidePreTool(in); block {
 		t.Error("RiskMedium finding must not trigger a hard block")
+	}
+}
+
+func TestRunHookDispatcherUnknownSubcommand(t *testing.T) {
+	err := runHook(context.Background(), []string{"nope"})
+	if err == nil {
+		t.Fatal("unknown subcommand must return an error")
+	}
+	if !strings.Contains(err.Error(), "unknown hook") {
+		t.Errorf("error should name the failure mode, got %q", err)
+	}
+}
+
+func TestRunHookDispatcherNoArgs(t *testing.T) {
+	if err := runHook(context.Background(), nil); err == nil {
+		t.Fatal("no-arg invocation must return a usage error")
+	}
+}
+
+func TestRunHookDispatcherRoutesToUserPrompt(t *testing.T) {
+	// Valid route — no stdin payload so the hook no-ops silently, but the
+	// point is to confirm the dispatch path resolves without error.
+	withHome(t)
+	withStdin(t, ``, func() {
+		if err := runHook(context.Background(), []string{"user-prompt"}); err != nil {
+			t.Errorf("valid route must not error on empty stdin: %v", err)
+		}
+	})
+}
+
+func TestWalkStringsNestedMap(t *testing.T) {
+	v := map[string]any{
+		"outer": "a",
+		"nested": map[string]any{
+			"inner": "b",
+			"list":  []any{"c", map[string]any{"deeper": "d"}},
+		},
+		"ignore_int":  42,
+		"ignore_bool": true,
+	}
+	var out []string
+	walkStrings(v, &out)
+	got := strings.Join(out, ",")
+	for _, want := range []string{"a", "b", "c", "d"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("walkStrings missed %q in nested traversal, got %v", want, out)
+		}
+	}
+	if strings.Contains(got, "42") || strings.Contains(got, "true") {
+		t.Errorf("walkStrings must skip non-string scalars, got %v", out)
+	}
+}
+
+func TestDeriveSessionSummaryFallsBackWhenIdle(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	defer d.close()
+	sess, err := d.sess.Open(ctx, session.OpenInput{Project: "mnemos"})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+
+	got := deriveSessionSummary(ctx, d, sess.ID)
+	if !strings.Contains(got, "no activity") {
+		t.Errorf("idle session must surface the no-activity marker, got %q", got)
+	}
+}
+
+func TestDeriveSessionSummaryIncludesTouchesAndObservations(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	defer d.close()
+
+	sess, err := d.sess.Open(ctx, session.OpenInput{Project: "mnemos"})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	if _, err := d.mem.Save(ctx, memory.SaveInput{
+		Title:     "x",
+		Content:   "y",
+		Project:   "mnemos",
+		Type:      memory.TypeDecision,
+		SessionID: sess.ID,
+	}); err != nil {
+		t.Fatalf("save obs: %v", err)
+	}
+	if err := d.db.Touches().Record(ctx, memory.TouchInput{
+		Project: "mnemos", Path: "internal/hook.go", SessionID: sess.ID,
+	}); err != nil {
+		t.Fatalf("record touch: %v", err)
+	}
+
+	got := deriveSessionSummary(ctx, d, sess.ID)
+	if !strings.Contains(got, "observation") {
+		t.Errorf("summary should mention observations, got %q", got)
+	}
+	if !strings.Contains(got, "hook.go") {
+		t.Errorf("summary should mention touched file basename, got %q", got)
+	}
+	if strings.Contains(got, "no activity") {
+		t.Errorf("active session must not use the idle fallback, got %q", got)
+	}
+}
+
+func TestSessionStatusFromReasonCoversAllKnownValues(t *testing.T) {
+	cases := map[string]session.Status{
+		"logout":                        session.StatusOK,
+		"clear":                         session.StatusOK,
+		"resume":                        session.StatusOK,
+		"other":                         session.StatusOK,
+		"":                              session.StatusOK,
+		"prompt_input_exit":             session.StatusAbandoned,
+		"bypass_permissions_disabled":   session.StatusBlocked,
+		"something-unknown-from-claude": session.StatusOK,
+	}
+	for reason, want := range cases {
+		if got := sessionStatusFromReason(reason); got != want {
+			t.Errorf("reason=%q: want %v, got %v", reason, want, got)
+		}
+	}
+}
+
+func TestSanitizeReasonDefaultsUnknown(t *testing.T) {
+	if got := sanitizeReason(""); got != "unknown" {
+		t.Errorf("empty reason must default to 'unknown', got %q", got)
+	}
+	if got := sanitizeReason("logout"); got != "logout" {
+		t.Errorf("non-empty reason must pass through, got %q", got)
 	}
 }
 
