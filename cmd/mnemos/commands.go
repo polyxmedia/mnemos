@@ -12,6 +12,7 @@ import (
 	"github.com/polyxmedia/mnemos/internal/config"
 	"github.com/polyxmedia/mnemos/internal/installer"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/rumination"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 	"github.com/polyxmedia/mnemos/internal/storage"
@@ -24,6 +25,7 @@ type deps struct {
 	mem  *memory.Service
 	sess *session.Service
 	skl  *skills.Service
+	rum  *rumination.Service
 	cfg  config.Config
 }
 
@@ -38,13 +40,37 @@ func loadDeps(ctx context.Context) (*deps, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open storage: %w", err)
 	}
+	skl := skills.NewService(skills.Config{Store: db.Skills()})
 	return &deps{
 		db:   db,
 		mem:  memory.NewService(memory.Config{Store: db.Observations()}),
 		sess: session.NewService(session.Config{Store: db.Sessions()}),
-		skl:  skills.NewService(skills.Config{Store: db.Skills()}),
+		skl:  skl,
+		rum:  newRumination(cfg, db, skl),
 		cfg:  cfg,
 	}, nil
+}
+
+// newRumination composes the rumination service with whatever monitors
+// the config enables. When `[rumination].enabled = false` we return nil
+// so callers (dream, MCP surface) quietly skip the feature — same guarded
+// pattern as skill promotion.
+func newRumination(cfg config.Config, db *storage.DB, skl *skills.Service) *rumination.Service {
+	if !cfg.Rumination.Enabled {
+		return nil
+	}
+	return rumination.NewService(rumination.Config{
+		Monitors: []rumination.Monitor{
+			&rumination.SkillEffectivenessMonitor{
+				Skills:  skl,
+				Floor:   cfg.Rumination.SkillEffectivenessFloor,
+				MinUses: cfg.Rumination.SkillMinUses,
+			},
+		},
+		Skills: skl,
+		Memory: db.Observations(),
+		Store:  db.Rumination(),
+	})
 }
 
 func runSearch(ctx context.Context, args []string) error {

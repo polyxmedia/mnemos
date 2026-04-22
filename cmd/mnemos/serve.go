@@ -18,6 +18,9 @@ import (
 	"github.com/polyxmedia/mnemos/internal/version"
 )
 
+// buildRumination is defined in commands.go as newRumination; serve
+// re-uses that helper so the rumination wiring stays in one place.
+
 // runServe starts the MCP stdio server (default) or the HTTP server when
 // --http is passed. Logs go to stderr so they don't pollute the stdio
 // JSON-RPC stream on stdout.
@@ -91,15 +94,17 @@ func runServe(ctx context.Context, args []string) error {
 		return httpSrv.Serve(ctx, addr)
 	}
 
+	rum := newRumination(cfg, db, skl)
 	srv := mcp.NewServer(mcp.Config{
-		Name:     "mnemos",
-		Version:  version.Version,
-		Memory:   mem,
-		Sessions: sess,
-		Skills:   skl,
-		Touches:  db.Touches(),
-		Prewarm:  pw,
-		Logger:   logger,
+		Name:       "mnemos",
+		Version:    version.Version,
+		Memory:     mem,
+		Sessions:   sess,
+		Skills:     skl,
+		Touches:    db.Touches(),
+		Prewarm:    pw,
+		Rumination: rum,
+		Logger:     logger,
 		StorageSize: func() (int64, error) {
 			fi, err := os.Stat(cfg.Storage.Path)
 			if err != nil {

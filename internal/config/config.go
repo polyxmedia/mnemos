@@ -14,12 +14,13 @@ import (
 
 // Config is the fully-resolved Mnemos configuration.
 type Config struct {
-	Storage   StorageConfig   `toml:"storage"`
-	Search    SearchConfig    `toml:"search"`
-	Server    ServerConfig    `toml:"server"`
-	Embedding EmbeddingConfig `toml:"embedding"`
-	Vault     VaultConfig     `toml:"vault"`
-	Dream     DreamConfig     `toml:"dream"`
+	Storage    StorageConfig    `toml:"storage"`
+	Search     SearchConfig     `toml:"search"`
+	Server     ServerConfig     `toml:"server"`
+	Embedding  EmbeddingConfig  `toml:"embedding"`
+	Vault      VaultConfig      `toml:"vault"`
+	Dream      DreamConfig      `toml:"dream"`
+	Rumination RuminationConfig `toml:"rumination"`
 }
 
 // StorageConfig controls the SQLite database location.
@@ -65,6 +66,16 @@ type DreamConfig struct {
 	DecayAmount int    `toml:"decay_amount"`
 }
 
+// RuminationConfig controls threshold-breach detection. Enabled by default
+// so the dream pass starts flagging weak skills on its first run without
+// additional user setup. Thresholds are conservative by design — the
+// intent is to fire on statistically meaningful patterns, not on noise.
+type RuminationConfig struct {
+	Enabled                 bool    `toml:"enabled"`
+	SkillEffectivenessFloor float64 `toml:"skill_effectiveness_floor"` // below this effectiveness → rumination candidate
+	SkillMinUses            int     `toml:"skill_min_uses"`            // must have been used at least this many times first
+}
+
 // Default returns the baked-in defaults — what you get on first run.
 func Default() Config {
 	return Config{
@@ -93,6 +104,11 @@ func Default() Config {
 			Interval:    "",
 			StaleDays:   30,
 			DecayAmount: 1,
+		},
+		Rumination: RuminationConfig{
+			Enabled:                 true,
+			SkillEffectivenessFloor: 0.3,
+			SkillMinUses:            10,
 		},
 	}
 }
@@ -224,6 +240,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Dream.DecayAmount == 0 {
 		cfg.Dream.DecayAmount = d.Dream.DecayAmount
 	}
+	if cfg.Rumination.SkillEffectivenessFloor == 0 {
+		cfg.Rumination.SkillEffectivenessFloor = d.Rumination.SkillEffectivenessFloor
+	}
+	if cfg.Rumination.SkillMinUses == 0 {
+		cfg.Rumination.SkillMinUses = d.Rumination.SkillMinUses
+	}
 }
 
 func validate(cfg Config) error {
@@ -248,6 +270,12 @@ func validate(cfg Config) error {
 	case "auto", "ollama", "openai", "none":
 	default:
 		return fmt.Errorf("config: embedding.provider must be auto|ollama|openai|none, got %q", cfg.Embedding.Provider)
+	}
+	if cfg.Rumination.SkillEffectivenessFloor < 0 || cfg.Rumination.SkillEffectivenessFloor > 1 {
+		return errors.New("config: rumination.skill_effectiveness_floor must be in [0, 1]")
+	}
+	if cfg.Rumination.SkillMinUses < 1 {
+		return errors.New("config: rumination.skill_min_uses must be >= 1")
 	}
 	return nil
 }

@@ -16,7 +16,7 @@
 
 ---
 
-Mnemos introduces the **correction journal**: a structured record of what the agent tried, why it was wrong, and the fix. It surfaces before the same mistake repeats.
+Mnemos is a **learning loop** for AI coding agents. Structured corrections compound into skills. Retrospective replay surfaces what you've learned since. The memory layer itself never calls an LLM: synthesis is deterministic pattern-mining, so the behaviour is reproducible, token-free, and auditable.
 
 ```json
 {
@@ -27,30 +27,40 @@ Mnemos introduces the **correction journal**: a structured record of what the ag
 }
 ```
 
-Two more primitives we haven't seen in other memory layers: **compaction recovery** (rebuild session state after the agent's context was compacted) and **retrospective replay** (query a past session with everything learned since). Delivered on a single Go binary with no Python, no Docker, and no vector DB required.
+Record three related corrections and mnemos promotes them into a skill. Replay a past session and get a markdown recap with every convention, correction, and skill added since: "what would I do differently now?" as a single CLI call. Delivered on one static Go binary with no Python, no Docker, no vector DB, and no CGO.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/install.sh | bash
 mnemos init
-# that's it. restart your agent.
+
+# Claude Code users: install the mnemos skill so the agent
+# actually records back to the store instead of silently editing.
+mkdir -p ~/.claude/skills/mnemos
+curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/.claude/skills/mnemos/SKILL.md \
+  -o ~/.claude/skills/mnemos/SKILL.md
+
+# restart your agent.
 ```
 
-## Novel primitives
+## The learning loop
 
-**Correction journal.** `tried / wrong_because / fix` as a first-class observation type with retrieval boosting. The agent records a mistake once; next session, the correction surfaces before the same path is taken again. Compounds over weeks of use.
+Three primitives compose into a compounding feedback cycle. Each one is useful on its own; together they turn a memory store into something that actually gets smarter over weeks of use.
 
-**Corrections → skills.** The dream pass scans accumulated corrections and when three or more cluster on the same (project, topic), mints an auto-promoted skill with `## When this applies`, `## Avoid`, `## Do` sections synthesised from the underlying `tried / wrong_because / fix` records. Idempotent via a stable origin hash: new corrections join the existing skill and bump its version instead of creating duplicates. The agent goes from "avoided this one mistake" to "learned a rule" without a human in the loop.
+**Correction journal.** `tried / wrong_because / fix` as a first-class observation type with retrieval boosting. The agent records a mistake once; next session, the correction surfaces before the same path is taken again. This is the atomic unit of the loop.
 
-**Compaction recovery.** When Claude Code (or any agent) compacts its context mid-session, one call to `mnemos_context` in recovery mode restores the goal, decisions, and in-session observations. A dedicated API surface, built for this case.
+**Corrections → skills.** The dream pass clusters accumulated corrections by `(agent, project, topic)`. When three or more land in the same cluster, mnemos mints an auto-promoted skill with `## When this applies`, `## Avoid`, and `## Do` sections, synthesised from the underlying `tried / wrong_because / fix` records. Promotion is deterministic pattern-mining: no LLM, no prompts, no drift. Idempotent via a stable origin hash: a repeat pass finds the existing skill and extends it, bumping version and provenance so duplicates never appear. The agent goes from "avoided this one mistake" to "learned a rule" without a human in the loop.
 
-**Retrospective replay.** `mnemos replay <session_id>` generates a markdown recap of a past session with everything learned since: corrections recorded after, conventions added after, skills promoted after, and observations that have been superseded. Paste it back into your agent and ask what you'd do differently now.
+**Retrospective replay.** `mnemos replay <session_id>` regenerates a past session as markdown with everything learned since layered in: corrections recorded after, conventions added after, skills promoted after, observations that have been superseded (flagged inline). Paste it back into your agent and ask what you would do differently now. The feedback signal of the learning loop.
+
+**Rumination.** The destructive counterpart to promotion. When a stored skill's effectiveness falls below the threshold (and, coming soon, when conventions are contradicted or superseded facts leak into retrieval), the dream pass enqueues a **rumination candidate** against it. `mnemos_ruminate_list` surfaces pending candidates; `mnemos_ruminate_pack` returns a review block with the **hypothesis verbatim**, **disconfirming evidence**, a **falsifiable restatement** of the rule, and **hostile review prompts** the agent must answer before proposing a revision. Resolution requires a structured `why_better` field naming a new prediction the revision makes that the old version did not — Popper's falsifiability guard, enforced at the tool boundary. Revisions invalidate the old version through the bi-temporal store; the rumination's origin stays on the new version as a `ruminated-from:<id>` tag. The memory store self-corrects; stale beliefs expire through adversarial review, not timeout.
 
 ## Also in the box
 
+- **Prompt-injection scanner at the memory-write boundary.** Memory stores are a new attack surface: any tool that writes observations can plant instruction-overrides, zero-width unicode, bidi overrides, fake tool-call syntax, or MCP spoofing into what the agent reads next session. Mnemos scans at injection time, sanitises low-risk content, and wraps high-risk content in a visible `[MNEMOS: FLAGGED]` banner before it reaches the model. As far as we can tell, no other memory layer ships this.
+- **Compaction recovery.** When Claude Code (or any agent) compacts its context mid-session, one call to `mnemos_context` in `recovery` mode restores the goal, decisions, and in-session observations. A dedicated API surface, built for this case.
 - **Dynamic composed prewarm.** `mnemos_session_start` returns a ranked, token-budgeted context block (conventions + recent sessions + matching skills + corrections + hot files) at the one moment LLMs are guaranteed to look. `mnemos init` wires a Claude Code `SessionStart` hook so the push fires automatically on every launch, not only when the agent thinks to call the tool.
-- **Hybrid retrieval.** BM25 (exact terms) plus cosine similarity (paraphrases) via Reciprocal Rank Fusion. Auto-enables if Ollama is running, falls back to pure FTS5 silently.
+- **Hybrid retrieval.** BM25 (exact terms) plus cosine similarity (paraphrases) via Reciprocal Rank Fusion. Auto-enables if Ollama is running, falls back to pure FTS5 silently. No vector DB.
 - **Bi-temporal store.** Facts carry valid/invalid timestamps so history stays queryable. "We used to use X, now Y" works without context poisoning. (Zep/Graphiti does this too.)
-- **Prompt-injection scanner.** Memory stores are a new attack surface. Mnemos scans at the injection boundary for instruction-override, role-spoof, and zero-width unicode patterns, and flags high-risk content before the agent sees it.
 - **Portable skill packs.** Export any skill (or all of them) as a JSON pack, share via file or URL, install with `mnemos skill import https://...`. Runtime stats stripped, pack versioning strict.
 - **Obsidian vault export.** Full markdown graph with wikilinks.
 - **Pure Go, zero CGO.** One static binary for Linux / macOS / Windows, amd64 + arm64. 15 MB. Docker-free, Python-free, vector-DB-free.
@@ -60,7 +70,6 @@ mnemos init
 | Method | Command |
 | --- | --- |
 | One-liner | `curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/install.sh \| bash` |
-| Homebrew | `brew install polyxmedia/tap/mnemos` |
 | Go | `go install github.com/polyxmedia/mnemos/cmd/mnemos@latest` |
 | Manual | [Download a release binary](https://github.com/polyxmedia/mnemos/releases) |
 
@@ -152,6 +161,16 @@ Restart Claude Code. The `mnemos_*` tools appear on next session.
 }
 ```
 
+**Claude Code skill (recommended).** The prewarm hook pushes context in; the skill pushes the agent to record back out. Without it, agents tend to skip `mnemos_*` tool calls on plain editing tasks and the store goes empty. Ship it by copying the file from this repo into your Claude Code skills directory:
+
+```bash
+mkdir -p ~/.claude/skills/mnemos
+curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/.claude/skills/mnemos/SKILL.md \
+  -o ~/.claude/skills/mnemos/SKILL.md
+```
+
+Next session, Claude Code will load the skill and invoke it on triggers like "save this", "remember", "we were wrong about", on any correction, and at session start/end. Source: [`.claude/skills/mnemos/SKILL.md`](.claude/skills/mnemos/SKILL.md).
+
 ### Cursor
 
 `~/.cursor/mcp.json`:
@@ -219,11 +238,11 @@ Mnemos is new (v0.1.x, early adoption). Table based on public documentation as o
 
 **What Mnemos adds** (we haven't found these in the others' public docs; if we missed something, let us know):
 
-- Correction journal as a first-class observation type with retrieval boosting
+- The learning loop triad: correction journal + deterministic corrections → skills promotion + retrospective replay, composed so each piece reinforces the next
+- LLM-free consolidation: pattern-mining over structured records, reproducible and token-free by design
+- Prompt-injection scanning at the memory-write boundary (memory stores are a new attack surface)
 - Compaction recovery as a dedicated API surface for restoring session state post-compaction
-- Retrospective session replay with post-session learnings layered in
-- Dynamic composed prewarm on session start
-- Prompt-injection scanning at the memory-write boundary
+- Dynamic composed prewarm on session start, auto-fired via a Claude Code `SessionStart` hook
 - Portable JSON skill packs with URL install
 - Obsidian vault export (markdown graph with wikilinks)
 
@@ -261,11 +280,11 @@ Mnemos is new (v0.1.x, early adoption). Table based on public documentation as o
 | `mnemos config` | Print current config |
 | `mnemos version` | Print version |
 
-## MCP tools (14)
+## MCP tools (18)
 
-`mnemos_save` · `mnemos_search` · `mnemos_get` · `mnemos_delete` · `mnemos_link` · `mnemos_session_start` · `mnemos_session_end` · `mnemos_context` · `mnemos_correct` · `mnemos_convention` · `mnemos_touch` · `mnemos_skill_match` · `mnemos_skill_save` · `mnemos_stats`
+`mnemos_save` · `mnemos_search` · `mnemos_get` · `mnemos_delete` · `mnemos_link` · `mnemos_session_start` · `mnemos_session_end` · `mnemos_context` · `mnemos_correct` · `mnemos_convention` · `mnemos_touch` · `mnemos_skill_match` · `mnemos_skill_save` · `mnemos_stats` · `mnemos_ruminate_list` · `mnemos_ruminate_pack` · `mnemos_ruminate_resolve` · `mnemos_ruminate_dismiss`
 
-See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for parameter details.
+See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for parameter details. The four `mnemos_ruminate_*` tools are exposed only when `[rumination].enabled = true` in config (the default).
 
 ## FAQ
 
@@ -337,6 +356,11 @@ interval     = ""           # e.g. "6h"
 stale_days   = 30
 decay_amount = 1
 
+[rumination]
+enabled                     = true   # threshold-breach detection in the dream pass
+skill_effectiveness_floor   = 0.3    # flag skills below this effectiveness
+skill_min_uses              = 10     # statistical floor — min uses before flagging
+
 [server]
 transport = "stdio"          # stdio | http
 http_addr = ":8080"
@@ -351,6 +375,7 @@ api_key   = ""               # bearer token when http
 - `internal/prewarm`: composes the session_start + compaction-recovery blocks
 - `internal/safety`: prompt-injection pattern scanner
 - `internal/dream`: consolidation daemon
+- `internal/rumination`: threshold-breach detection + hostile-review packaging (LLM-free)
 - `internal/vault`: Obsidian export + watcher (gopkg.in/yaml.v3)
 - `internal/embedding`: Ollama / OpenAI / Noop providers, auto-probe
 - `internal/mcp`: wraps the [official MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)

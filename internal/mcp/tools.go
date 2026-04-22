@@ -10,6 +10,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
+	"github.com/polyxmedia/mnemos/internal/rumination"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
@@ -99,6 +100,44 @@ func (s *Server) registerTools() {
 		Description: "Save or version a reusable procedure. Keyed by (agent_id, name); same name bumps " +
 			"the version.",
 	}, s.handleSkillSave)
+
+	// Rumination ---------------------------------------------------------
+	// Guarded: only expose the ruminate_* surface when a rumination
+	// service is wired. Makes rumination.enabled = false (in config) a
+	// clean no-op instead of surfacing tools that immediately error.
+	if s.cfg.Rumination != nil {
+		mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+			Name: "mnemos_ruminate_list",
+			Description: "List pending rumination candidates (skills whose effectiveness has " +
+				"fallen below the threshold, or other threshold breaches). Ordered severity-desc, " +
+				"detected-at-desc. Each candidate is a hypothesis waiting for the hostile review " +
+				"ritual — fetch the full review block with mnemos_ruminate_pack.",
+		}, s.handleRuminateList)
+
+		mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+			Name: "mnemos_ruminate_pack",
+			Description: "Fetch the review block for one rumination candidate: hypothesis verbatim, " +
+				"disconfirming evidence, falsifiable restatement, and hostile-review prompts. Answer " +
+				"the prompts before writing a revision — the structure enforces scientific-method " +
+				"reasoning over the stored belief.",
+		}, s.handleRuminatePack)
+
+		mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+			Name: "mnemos_ruminate_resolve",
+			Description: "Close a rumination candidate by naming the revision that replaces the " +
+				"flagged belief. Requires resolved_by (the ID of the new skill version or superseding " +
+				"observation) AND why_better (one sentence stating a new prediction the revision " +
+				"makes that the old version did not — Popper's falsifiability guard).",
+		}, s.handleRuminateResolve)
+
+		mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+			Name: "mnemos_ruminate_dismiss",
+			Description: "Close a rumination candidate as noise — the rule stands. Reason is " +
+				"required; it prevents the next dream pass from re-raising the same flag without " +
+				"context. Use when you've decided the disconfirming evidence was a one-off or the " +
+				"rule's premise is still sound.",
+		}, s.handleRuminateDismiss)
+	}
 
 	// Stats --------------------------------------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
@@ -515,6 +554,129 @@ func (s *Server) handleStats(ctx context.Context, _ *mcpsdk.CallToolRequest, _ s
 		}
 	}
 	return jsonResult(out)
+}
+
+// ---- rumination --------------------------------------------------------
+
+type ruminateListArgs struct {
+	Limit int `json:"limit,omitempty" jsonschema:"max candidates to return; 0 = all"`
+}
+
+func (s *Server) handleRuminateList(ctx context.Context, _ *mcpsdk.CallToolRequest, a ruminateListArgs) (*mcpsdk.CallToolResult, any, error) {
+	list, err := s.cfg.Rumination.Pending(ctx, a.Limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, c := range list {
+		out = append(out, map[string]any{
+			"id":           c.ID,
+			"monitor":      c.MonitorName,
+			"severity":     c.Severity.String(),
+			"reason":       c.Reason,
+			"target_kind":  string(c.TargetKind),
+			"target_id":    c.TargetID,
+			"detected_at":  c.DetectedAt,
+			"evidence_n":   len(c.Evidence),
+		})
+	}
+	counts, _ := s.cfg.Rumination.Counts(ctx)
+	return jsonResult(map[string]any{
+		"candidates": out,
+		"counts": map[string]any{
+			"pending":   counts.Pending,
+			"resolved":  counts.Resolved,
+			"dismissed": counts.Dismissed,
+		},
+	})
+}
+
+type ruminatePackArgs struct {
+	ID string `json:"id"`
+}
+
+func (s *Server) handleRuminatePack(ctx context.Context, _ *mcpsdk.CallToolRequest, a ruminatePackArgs) (*mcpsdk.CallToolResult, any, error) {
+	if a.ID == "" {
+		return nil, nil, fmt.Errorf("rumination: id required")
+	}
+	block, err := s.cfg.Rumination.PackByID(ctx, a.ID)
+	if err != nil {
+		if errors.Is(err, rumination.ErrNotFound) {
+			return nil, nil, fmt.Errorf("rumination candidate not found: %s", a.ID)
+		}
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{
+		"candidate_id":    block.CandidateID,
+		"target_kind":     string(block.Target.Kind),
+		"target_id":       block.Target.ID,
+		"target_name":     block.Target.Name,
+		"text":            block.Text,
+		"token_estimate":  block.TokenEstimate,
+	})
+}
+
+type ruminateResolveArgs struct {
+	ID         string `json:"id"`
+	ResolvedBy string `json:"resolved_by" jsonschema:"ID of the new skill version or superseding observation"`
+	// WhyBetter is the Popper-grade guard: name one prediction the revision
+	// makes that the old version did not. The schema enforces the field;
+	// the handler enforces non-empty and a minimum length.
+	WhyBetter string `json:"why_better" jsonschema:"one sentence — a concrete new prediction the revised version makes that the old one did not. Cosmetic rewording is rejected."`
+}
+
+func (s *Server) handleRuminateResolve(ctx context.Context, _ *mcpsdk.CallToolRequest, a ruminateResolveArgs) (*mcpsdk.CallToolResult, any, error) {
+	if a.ID == "" {
+		return nil, nil, fmt.Errorf("rumination: id required")
+	}
+	if a.ResolvedBy == "" {
+		return nil, nil, fmt.Errorf("rumination: resolved_by required — the revision must carry provenance")
+	}
+	// Minimum length on why_better rejects single-word filler like "yes"
+	// or "better" that would satisfy a naive non-empty check. 16 chars is
+	// long enough to require an actual sentence without punishing the
+	// agent on terseness.
+	if len([]rune(a.WhyBetter)) < 16 {
+		return nil, nil, fmt.Errorf("rumination: why_better must state a new prediction (min 16 chars), got %d", len([]rune(a.WhyBetter)))
+	}
+
+	if err := s.cfg.Rumination.Resolve(ctx, a.ID, a.ResolvedBy); err != nil {
+		if errors.Is(err, rumination.ErrNotFound) {
+			return nil, nil, fmt.Errorf("rumination candidate not found: %s", a.ID)
+		}
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{
+		"id":          a.ID,
+		"status":      string(rumination.StatusResolved),
+		"resolved_by": a.ResolvedBy,
+		"why_better":  a.WhyBetter,
+	})
+}
+
+type ruminateDismissArgs struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason" jsonschema:"one-line justification — preserved so a later pass does not re-raise the same flag without context"`
+}
+
+func (s *Server) handleRuminateDismiss(ctx context.Context, _ *mcpsdk.CallToolRequest, a ruminateDismissArgs) (*mcpsdk.CallToolResult, any, error) {
+	if a.ID == "" {
+		return nil, nil, fmt.Errorf("rumination: id required")
+	}
+	if len([]rune(a.Reason)) < 8 {
+		return nil, nil, fmt.Errorf("rumination: reason must be at least 8 chars")
+	}
+	if err := s.cfg.Rumination.Dismiss(ctx, a.ID, a.Reason); err != nil {
+		if errors.Is(err, rumination.ErrNotFound) {
+			return nil, nil, fmt.Errorf("rumination candidate not found: %s", a.ID)
+		}
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{
+		"id":     a.ID,
+		"status": string(rumination.StatusDismissed),
+		"reason": a.Reason,
+	})
 }
 
 // ---- helpers -----------------------------------------------------------

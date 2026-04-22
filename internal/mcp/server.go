@@ -13,6 +13,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
+	"github.com/polyxmedia/mnemos/internal/rumination"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
@@ -25,7 +26,7 @@ type Server struct {
 }
 
 // Config bundles the dependencies a Server needs. Every field except
-// Name, Version, and Logger is required.
+// Name, Version, Logger, and Rumination is required.
 type Config struct {
 	Name        string
 	Version     string
@@ -34,6 +35,7 @@ type Config struct {
 	Skills      *skills.Service
 	Touches     memory.TouchStore
 	Prewarm     *prewarm.Service
+	Rumination  *rumination.Service // optional; enables the mnemos_ruminate_* tools
 	Logger      *slog.Logger
 	StorageSize func() (int64, error) // optional: reports storage_bytes in mnemos_stats
 }
