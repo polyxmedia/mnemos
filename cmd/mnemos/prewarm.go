@@ -27,6 +27,7 @@ type hookInput struct {
 	Prompt        string         `json:"prompt,omitempty"`
 	ToolName      string         `json:"tool_name,omitempty"`
 	ToolInput     map[string]any `json:"tool_input,omitempty"`
+	Reason        string         `json:"reason,omitempty"`
 }
 
 // runPrewarm composes a prewarm block and prints it. Designed to be wired as

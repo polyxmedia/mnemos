@@ -28,6 +28,8 @@ func runHook(ctx context.Context, args []string) error {
 		return runHookUserPrompt(ctx, rest)
 	case "post-tool":
 		return runHookPostTool(ctx, rest)
+	case "session-end":
+		return runHookSessionEnd(ctx, rest)
 	default:
 		return fmt.Errorf("unknown hook: %s", sub)
 	}
@@ -163,4 +165,95 @@ func filePathFromToolInput(m map[string]any) string {
 		return v
 	}
 	return ""
+}
+
+// runHookSessionEnd handles Claude Code's SessionEnd event. If a mnemos
+// session is still open, close it with a summary stitched from recent
+// activity and a status derived from the reason Claude Code supplied.
+// No-ops when the agent already called mnemos_session_end properly —
+// session.Close guards on ended_at IS NULL and returns ErrNotFound.
+func runHookSessionEnd(ctx context.Context, _ []string) error {
+	in := readHookStdin(os.Stdin)
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
+		return nil
+	}
+	defer d.close()
+
+	sess, err := d.sess.Current(ctx, "")
+	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return nil
+		}
+		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
+		return nil
+	}
+	if sess == nil {
+		return nil
+	}
+
+	summary := deriveSessionSummary(ctx, d, sess.ID)
+	status := sessionStatusFromReason(in.Reason)
+
+	err = d.sess.Close(ctx, session.CloseInput{
+		ID:          sess.ID,
+		Summary:     summary,
+		Status:      status,
+		OutcomeTags: []string{"auto-closed:" + sanitizeReason(in.Reason)},
+	})
+	if err != nil && !errors.Is(err, session.ErrNotFound) {
+		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
+	}
+	return nil
+}
+
+// deriveSessionSummary builds a one-line recap from recent activity on the
+// session: counts observations and touches, names the top files. Best
+// effort — returns "" if either query fails. A small, deterministic
+// summary beats an empty close.
+func deriveSessionSummary(ctx context.Context, d *deps, sessID string) string {
+	obs, err := d.db.Observations().ListBySession(ctx, sessID)
+	if err != nil {
+		return ""
+	}
+	parts := []string{}
+	if n := len(obs); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d observation(s)", n))
+	}
+	if hot, err := d.db.Touches().Hot(ctx, "", "", 5); err == nil && len(hot) > 0 {
+		files := make([]string, 0, len(hot))
+		for _, h := range hot {
+			files = append(files, filepath.Base(h.Path))
+		}
+		parts = append(parts, "touched "+strings.Join(files, ", "))
+	}
+	if len(parts) == 0 {
+		return "auto-closed on SessionEnd (no activity recorded)"
+	}
+	return "auto-closed on SessionEnd: " + strings.Join(parts, "; ")
+}
+
+// sessionStatusFromReason maps Claude Code's SessionEnd `reason` to a
+// mnemos session status. Ctrl+C style exits get StatusAbandoned so
+// replay/learning can weight them differently from clean closes.
+func sessionStatusFromReason(reason string) session.Status {
+	switch reason {
+	case "prompt_input_exit":
+		return session.StatusAbandoned
+	case "bypass_permissions_disabled":
+		return session.StatusBlocked
+	default:
+		return session.StatusOK
+	}
+}
+
+// sanitizeReason defaults to "unknown" when Claude Code omitted the field
+// so outcome tags stay queryable.
+func sanitizeReason(r string) string {
+	if r == "" {
+		return "unknown"
+	}
+	return r
 }

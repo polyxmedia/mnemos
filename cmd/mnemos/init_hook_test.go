@@ -137,6 +137,33 @@ func TestRunInitWiresPostToolUseHookForClaudeCode(t *testing.T) {
 	}
 }
 
+func TestRunInitWiresSessionEndHookForClaudeCode(t *testing.T) {
+	home := setupClaudeCodeHome(t)
+
+	out := captureStdout(t, func() {
+		if err := runInit(context.Background(), nil); err != nil {
+			t.Fatalf("init: %v", err)
+		}
+	})
+	if !strings.Contains(out, "SessionEnd hook wired") {
+		t.Errorf("expected SessionEnd hook wired line, got: %s", out)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(home, "settings.json"))
+	var cfg map[string]any
+	_ = json.Unmarshal(data, &cfg)
+	hooks := cfg["hooks"].(map[string]any)
+	groups, ok := hooks["SessionEnd"].([]any)
+	if !ok || len(groups) != 1 {
+		t.Fatalf("expected one SessionEnd group, got %v", groups)
+	}
+	inner := groups[0].(map[string]any)["hooks"].([]any)
+	cmd := inner[0].(map[string]any)["command"].(string)
+	if !strings.HasSuffix(cmd, "hook session-end") {
+		t.Errorf("SessionEnd command should end with 'hook session-end', got %q", cmd)
+	}
+}
+
 func TestRunInitHookIsIdempotent(t *testing.T) {
 	setupClaudeCodeHome(t)
 

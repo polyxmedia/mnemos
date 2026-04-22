@@ -366,6 +366,14 @@ func runInit(_ context.Context, _ []string) error {
 					Timeout: 5,
 				},
 			},
+			{
+				label: "Claude Code SessionEnd hook",
+				entry: installer.HookEntry{
+					Event:   "SessionEnd",
+					Command: fmt.Sprintf("%s hook session-end", selfPath),
+					Timeout: 5,
+				},
+			},
 		}
 		for _, h := range hookEntries {
 			changed, err := installer.InstallHook(settings, h.entry)
@@ -446,6 +454,10 @@ func runDoctor(ctx context.Context, _ []string) error {
 				Event:   "PostToolUse",
 				Matcher: "Edit|Write|MultiEdit|NotebookEdit",
 				Command: fmt.Sprintf("%s hook post-tool", selfPath),
+			}},
+			{"Claude Code SessionEnd hook", installer.HookEntry{
+				Event:   "SessionEnd",
+				Command: fmt.Sprintf("%s hook session-end", selfPath),
 			}},
 		}
 		for _, h := range doctorHooks {

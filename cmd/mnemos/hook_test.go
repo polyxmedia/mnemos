@@ -204,6 +204,108 @@ func TestHookPostToolSilentWhenFilePathMissing(t *testing.T) {
 	})
 }
 
+func TestHookSessionEndClosesOpenSession(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	sess, err := d.sess.Open(ctx, session.OpenInput{Project: "mnemos", Goal: "ship hooks"})
+	if err != nil {
+		t.Fatalf("open session: %v", err)
+	}
+	d.close()
+
+	payload := `{"hook_event_name":"SessionEnd","reason":"logout"}`
+	withStdin(t, payload, func() {
+		if err := runHookSessionEnd(ctx, nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	got, err := d2.sess.Get(ctx, sess.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.EndedAt == nil {
+		t.Fatal("expected session closed, ended_at still nil")
+	}
+	if got.Status != session.StatusOK {
+		t.Errorf("expected StatusOK for reason=logout, got %v", got.Status)
+	}
+	foundTag := false
+	for _, tag := range got.OutcomeTags {
+		if tag == "auto-closed:logout" {
+			foundTag = true
+			break
+		}
+	}
+	if !foundTag {
+		t.Errorf("expected auto-closed:logout tag, got %v", got.OutcomeTags)
+	}
+}
+
+func TestHookSessionEndMapsAbandonStatus(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, _ := loadDeps(ctx)
+	sess, _ := d.sess.Open(ctx, session.OpenInput{Project: "mnemos"})
+	d.close()
+
+	withStdin(t, `{"hook_event_name":"SessionEnd","reason":"prompt_input_exit"}`, func() {
+		_ = runHookSessionEnd(ctx, nil)
+	})
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	got, _ := d2.sess.Get(ctx, sess.ID)
+	if got.Status != session.StatusAbandoned {
+		t.Errorf("Ctrl+C exit must map to StatusAbandoned, got %v", got.Status)
+	}
+}
+
+func TestHookSessionEndDoesNotReopenAlreadyClosed(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, _ := loadDeps(ctx)
+	sess, _ := d.sess.Open(ctx, session.OpenInput{Project: "mnemos"})
+	// Agent already closed it cleanly.
+	_ = d.sess.Close(ctx, session.CloseInput{
+		ID: sess.ID, Summary: "shipped", Status: session.StatusOK,
+	})
+	d.close()
+
+	withStdin(t, `{"hook_event_name":"SessionEnd","reason":"logout"}`, func() {
+		if err := runHookSessionEnd(ctx, nil); err != nil {
+			t.Errorf("hook must not error on already-closed session: %v", err)
+		}
+	})
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	got, _ := d2.sess.Get(ctx, sess.ID)
+	if got.Summary != "shipped" {
+		t.Errorf("existing summary must be preserved, got %q", got.Summary)
+	}
+}
+
+func TestHookSessionEndNoOpenSessionIsSilent(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	withStdin(t, `{"hook_event_name":"SessionEnd","reason":"logout"}`, func() {
+		if err := runHookSessionEnd(ctx, nil); err != nil {
+			t.Errorf("hook must not error when no session is open: %v", err)
+		}
+	})
+}
+
 func TestHookUserPromptEmptyPromptIsSilent(t *testing.T) {
 	withHome(t)
 	ctx := context.Background()
