@@ -75,6 +75,10 @@ func newRumination(cfg config.Config, db *storage.DB, skl *skills.Service) *rumi
 			Skills:          skl,
 			RepeatThreshold: cfg.Rumination.CorrectionRepeatN,
 		},
+		&rumination.ContradictionDetectedMonitor{
+			Links:     db.Observations(),
+			Threshold: cfg.Rumination.ContradictionThreshold,
+		},
 	}
 	return rumination.NewService(rumination.Config{
 		Monitors: monitors,

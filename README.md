@@ -52,7 +52,7 @@ Three primitives compose into a compounding feedback cycle. Each one is useful o
 
 **Retrospective replay.** `mnemos replay <session_id>` regenerates a past session as markdown with everything learned since layered in: corrections recorded after, conventions added after, skills promoted after, observations that have been superseded (flagged inline). Paste it back into your agent and ask what you would do differently now. The feedback signal of the learning loop.
 
-**Rumination.** The destructive counterpart to promotion. When a stored skill's effectiveness falls below the threshold (and, coming soon, when conventions are contradicted or superseded facts leak into retrieval), the dream pass enqueues a **rumination candidate** against it. `mnemos_ruminate_list` surfaces pending candidates; `mnemos_ruminate_pack` returns a review block with the **hypothesis verbatim**, **disconfirming evidence**, a **falsifiable restatement** of the rule, and **hostile review prompts** the agent must answer before proposing a revision. Resolution requires a structured `why_better` field naming a new prediction the revision makes that the old version did not — Popper's falsifiability guard, enforced at the tool boundary. Revisions invalidate the old version through the bi-temporal store; the rumination's origin stays on the new version as a `ruminated-from:<id>` tag. The memory store self-corrects; stale beliefs expire through adversarial review, not timeout.
+**Rumination.** The destructive counterpart to promotion. Four threshold monitors run in the dream pass and raise **rumination candidates** when stored knowledge stops holding up: a skill whose effectiveness fell below the floor, a skill untouched for months that never earned its slot, a skill whose topic keeps accumulating corrections after it was promoted, and a convention that has been explicitly contradicted via a `contradicts` link. `mnemos_ruminate_list` surfaces pending candidates; `mnemos_ruminate_pack` returns a review block with the **hypothesis verbatim**, **disconfirming evidence**, a **falsifiable restatement** of the rule, and **hostile review prompts** the agent must answer before proposing a revision. Resolution requires a structured `why_better` field naming a new prediction the revision makes that the old version did not — Popper's falsifiability guard, enforced at the tool boundary. Revisions invalidate the old version through the bi-temporal store; the rumination's origin stays on the new version as a `ruminated-from:<id>` tag, and the dream pass auto-closes candidates whose target carries that tag. The memory store self-corrects; stale beliefs expire through adversarial review, not timeout.
 
 ## Also in the box
 
@@ -358,8 +358,12 @@ decay_amount = 1
 
 [rumination]
 enabled                     = true   # threshold-breach detection in the dream pass
-skill_effectiveness_floor   = 0.3    # flag skills below this effectiveness
-skill_min_uses              = 10     # statistical floor — min uses before flagging
+skill_effectiveness_floor   = 0.3    # SkillEffectivenessMonitor: flag skills below this
+skill_min_uses              = 10     # statistical floor before the effectiveness monitor fires
+stale_skill_days            = 90     # StaleSkillMonitor: untouched + underperforming for this long
+stale_skill_floor           = 0.5    # staleness triggers only when effectiveness is below this
+correction_repeat_n         = 3      # CorrectionRepeatUnderSkillMonitor: corrections after skill exists
+contradiction_threshold     = 1      # ContradictionDetectedMonitor: min contradicts-links before flagging
 
 [server]
 transport = "stdio"          # stdio | http

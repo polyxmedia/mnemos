@@ -6,7 +6,7 @@ Open work on Mnemos. Pick anything here and ship it. If you want to claim an ite
 
 - [x] v0.1.0 — storage, memory service, MCP server (14 tools), installer, HTTP API
 - [x] v0.2.0 — skill packs, session replay, bi-temporal timestamp precision fix
-- [x] v0.3.x (unreleased) — Claude Code SessionStart hook auto-wired by `mnemos init`, self-updating binary (`mnemos update`), corrections-to-skills auto-promotion in the dream pass
+- [x] v0.3.0 — Claude Code SessionStart hook auto-wired by `mnemos init`, self-updating binary (`mnemos update`), corrections-to-skills auto-promotion in the dream pass, Claude Code skill for agent tool-call reliability, and the full rumination feature: four threshold monitors (skill effectiveness, stale skill, correction-repeat-under-skill, contradiction-detected), dedicated SQLite queue with pending/resolved/dismissed lifecycle, four MCP tools (`mnemos_ruminate_list` / `_pack` / `_resolve` / `_dismiss`) with a Popper-style `why_better` guard on resolve, prewarm badge on matched skills, and dream-pass auto-resolve via `ruminated-from:<id>` provenance tags
 
 ## Next up — high-leverage
 

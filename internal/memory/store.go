@@ -26,6 +26,7 @@ type Reader interface {
 	ListBySession(ctx context.Context, sessionID string) ([]Observation, error)
 	ListByTitleSimilarity(ctx context.Context, agentID, title string, limit int) ([]Observation, error)
 	FindByContentHash(ctx context.Context, agentID, project, hash string) (*Observation, error)
+	ListLinks(ctx context.Context, linkType LinkType, agentID string, limit int) ([]LinkEdge, error)
 	Stats(ctx context.Context) (Stats, error)
 }
 

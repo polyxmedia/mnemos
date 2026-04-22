@@ -67,6 +67,9 @@ func (f *fakeMemoryReader) ListByTitleSimilarity(ctx context.Context, agentID, t
 func (f *fakeMemoryReader) FindByContentHash(ctx context.Context, agentID, project, hash string) (*memory.Observation, error) {
 	return nil, nil
 }
+func (f *fakeMemoryReader) ListLinks(ctx context.Context, linkType memory.LinkType, agentID string, limit int) ([]memory.LinkEdge, error) {
+	return nil, nil
+}
 func (f *fakeMemoryReader) Stats(ctx context.Context) (memory.Stats, error) {
 	return memory.Stats{}, nil
 }

@@ -228,6 +228,23 @@ type RecentSession struct {
 	EndedAt   *time.Time
 }
 
+// LinkEdge is a materialised view of one row in the observation_links
+// table with both endpoints' titles and agent IDs inlined. Returned from
+// link-graph queries (e.g. monitor_contradiction's scan) so callers do
+// not have to round-trip to observations on every edge they inspect.
+type LinkEdge struct {
+	LinkType        LinkType
+	SourceID        string
+	SourceTitle     string
+	SourceAgent     string
+	SourceCreatedAt time.Time
+	TargetID        string
+	TargetTitle     string
+	TargetAgent     string
+	TargetCreatedAt time.Time
+	LinkedAt        time.Time
+}
+
 // FileTouch records that an agent touched a file during a session.
 type FileTouch struct {
 	Project   string

@@ -216,6 +216,58 @@ func (s *obsStore) Link(ctx context.Context, sourceID, targetID string, linkType
 	return nil
 }
 
+// ListLinks returns edges of the given link type where both endpoints are
+// still live. Callers pass agentID to scope to their agent; empty means
+// all agents. The source and target titles come back inline so monitors
+// don't need a second round-trip per edge. Ordered by link created_at
+// descending so the newest contradictions rise first.
+func (s *obsStore) ListLinks(ctx context.Context, linkType memory.LinkType, agentID string, limit int) ([]memory.LinkEdge, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	query := `
+		SELECT l.source_id, src.title, src.agent_id, src.created_at,
+		       l.target_id, tgt.title, tgt.agent_id, tgt.created_at,
+		       l.created_at
+		  FROM observation_links l
+		  JOIN observations src ON src.id = l.source_id
+		  JOIN observations tgt ON tgt.id = l.target_id
+		 WHERE l.link_type = ?
+		   AND src.invalidated_at IS NULL
+		   AND tgt.invalidated_at IS NULL`
+	args := []any{string(linkType)}
+	if agentID != "" {
+		query += ` AND tgt.agent_id = ?`
+		args = append(args, agentID)
+	}
+	query += ` ORDER BY l.created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list links: %w", err)
+	}
+	defer rows.Close()
+
+	var out []memory.LinkEdge
+	for rows.Next() {
+		var e memory.LinkEdge
+		if err := rows.Scan(
+			&e.SourceID, &e.SourceTitle, &e.SourceAgent, &e.SourceCreatedAt,
+			&e.TargetID, &e.TargetTitle, &e.TargetAgent, &e.TargetCreatedAt,
+			&e.LinkedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan link: %w", err)
+		}
+		e.LinkType = linkType
+		e.SourceCreatedAt = e.SourceCreatedAt.UTC()
+		e.TargetCreatedAt = e.TargetCreatedAt.UTC()
+		e.LinkedAt = e.LinkedAt.UTC()
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (s *obsStore) Prune(ctx context.Context, now time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`DELETE FROM observations WHERE expires_at IS NOT NULL AND expires_at <= ?`,
