@@ -13,7 +13,36 @@ Open work on Mnemos. Pick anything here and ship it. If you want to claim an ite
 - [ ] **`mnemos digest`** — nightly markdown summary ("yesterday you saved 12 observations, promoted 2 skills, dreamed at 2am"). Ship as `mnemos digest --since 24h`. Small feature, big "numbers on the screen" moment for devs who like to see their memory store earn its keep.
 - [ ] **VS Code extension** — sidebar that reads `mnemos_touch` heat map, surfaces corrections as hover hints on files with saved corrections. Status-bar widget: "Session active · 12 obs · 3 corrections matched". Makes Mnemos *visible* in the editor, which is what gets shared.
 - [ ] **Homebrew tap** — create `polyxmedia/homebrew-tap`, add `HOMEBREW_TAP_GITHUB_TOKEN` to Actions secrets, uncomment the brews block in `.goreleaser.yml`. One-line install becomes `brew install polyxmedia/tap/mnemos`.
-- [ ] **Skill pack registry** — a static site (or a GitHub repo) listing public skill packs. Registry entries point at raw JSON URLs. `mnemos skill search <query>` queries it.
+
+## Invocation reliability — make sure mnemos is called at the right time
+
+Claude Code exposes ~26 hook events; we ship 3. A memory system nobody invokes is zero value regardless of schema quality, so this layer gates everything downstream.
+
+**Shipped**
+
+- [x] `SessionStart` → `mnemos prewarm` (passive context injection)
+- [x] `UserPromptSubmit` → `mnemos hook user-prompt` (backfills session goal from the first prompt — kills the "agent skipped mnemos_session_start on editing tasks" failure mode)
+- [x] `PostToolUse` (`Edit|Write|MultiEdit|NotebookEdit`) → `mnemos hook post-tool` (passive file-touch capture; the heat map no longer depends on the agent remembering to call `mnemos_touch`)
+
+**Next (all straight drop-ins, no design work)**
+
+- [ ] **`SessionEnd` hook** — carries a `reason` field (`logout` | `clear` | `resume` | `prompt_input_exit` | `bypass_permissions_disabled` | `other`). Close any open mnemos session for the cwd with a derived summary. Native event for session close — not `Stop` (per-turn) and not `SessionStart`-cleanup-on-next-launch (lazy).
+- [ ] **`PreCompact` / `PostCompact` hooks** — we already have `prewarm --mode=compaction_recovery`, but it only fires reactively on the next `SessionStart`. Hook `PreCompact` to dump a proactive snapshot before context is lost, and `PostCompact` to re-prewarm immediately. Closes the one-turn gap where the agent is working on freshly-compacted context without mnemos restored.
+
+**Bigger — the blocking-hook pattern we haven't used at all**
+
+Claude Code hooks can exit 2 with stderr that **feeds back into Claude's context**. All our hooks today are passive (exit 0, record something). The blocking pattern turns memory from "hint the agent may ignore" into an active guardrail:
+
+- [ ] **Blocking-hook demo** — ship one concrete blocker to compose the pattern. Candidate: `PreToolUse` matched on `Bash`, blocks `git commit` commands whose message carries AI attribution phrasing when the project has a stored correction against it. Narrow, demonstrable, opens the door.
+- [ ] **`PreToolUse` on `mcp__mnemos__mnemos_save` / `_correct`** — scan incoming content for injection before it lands in the store. This is Bet 2's quarantine tier shipping at the hook layer, much earlier than the full provenance work.
+- [ ] **`PreToolUse` on `Edit` / `Write`** — if an active correction contradicts the pattern being introduced, surface it via stderr (fed to Claude) so the agent self-corrects before the file is written. Highest-leverage use of the memory store.
+- [ ] **`TaskCreated` / `TaskCompleted`** — gate on rumination queue for the topic; surface high-severity candidates before the agent commits to an approach.
+- [ ] **`SubagentStart` / `SubagentStop`** — cascade subagent learnings back to the parent session so corrections made inside a subagent don't get lost.
+
+**Distribution — same mechanism, different hosts**
+
+- [ ] **Multi-agent installers** — `mnemos init` only knows Claude Code today. Each other host has the same "harness hook" concept under a different name: Cursor has `.cursor/rules` + hooks in preview, Windsurf has Cascade rules, Codex CLI has AGENTS.md, Gemini CLI has its own. Mechanism is the same (hook, not agent judgement); config files differ. Ride on Bet 3's spec once that lands; until then, ship host-specific installers for the ones people actually use.
+- [ ] **Skill pack registry** — moved down from "Next up" (lower priority than invocation reliability; Anthropic's Agent Skills ecosystem already claimed this category).
 
 ## The three bets — April 2026 frontier plays
 
