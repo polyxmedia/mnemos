@@ -123,6 +123,24 @@ func (s *obsStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// SetTrustTier updates an observation's trust_tier. No bi-temporal effect:
+// trust is a retrieval filter, not a fact-time property. The service layer
+// enforces that tier is valid and that the caller supplied a why_better
+// justification before promoting.
+func (s *obsStore) SetTrustTier(ctx context.Context, id string, tier memory.TrustTier) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE observations SET trust_tier = ? WHERE id = ?`,
+		string(tier), id)
+	if err != nil {
+		return fmt.Errorf("set trust tier: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return memory.ErrNotFound
+	}
+	return nil
+}
+
 func (s *obsStore) Invalidate(ctx context.Context, id string, validUntil time.Time) error {
 	// Explicit Go-side timestamp preserves sub-second precision — important
 	// for bi-temporal queries and replay filtering.
@@ -192,6 +210,12 @@ func (s *obsStore) Search(ctx context.Context, in memory.SearchInput) ([]memory.
 		args = append(args, asOf.UTC())
 		sb.WriteString(` AND (o.expires_at  IS NULL OR o.expires_at  > ?)`)
 		args = append(args, asOf.UTC())
+	}
+	if !in.IncludeRaw {
+		// Quarantine: raw-tier observations come from untrusted sources
+		// (tool output, agent inference not yet confirmed). Excluded
+		// from default search; opt in with IncludeRaw=true.
+		sb.WriteString(` AND o.trust_tier != 'raw'`)
 	}
 	for _, tag := range in.Tags {
 		sb.WriteString(` AND o.tags LIKE ?`)

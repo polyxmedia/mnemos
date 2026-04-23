@@ -222,6 +222,43 @@ func (s *Service) Invalidate(ctx context.Context, id string) error {
 	return s.store.Invalidate(ctx, id, s.clock().UTC())
 }
 
+// PromoteInput carries the arguments for moving an observation between
+// trust tiers. WhyBetter is the Popper-style justification: one sentence
+// stating what concrete signal justifies the tier change. Short, terse
+// demands enforce that the caller actually thought about it — the same
+// guard the rumination resolve flow uses.
+type PromoteInput struct {
+	ID        string
+	ToTier    TrustTier
+	WhyBetter string
+}
+
+// minPromoteReasonLen matches mnemos_ruminate_resolve's threshold so the
+// UX is consistent: 16 chars is enough to force "revised because we saw
+// X" rather than rubber-stamp "ok", cheap enough to not obstruct real use.
+const minPromoteReasonLen = 16
+
+// Promote moves an observation between trust tiers. Typical path is
+// TrustRaw → TrustCurated when tool-output content has been validated by
+// the user or a rumination/dream pass. TrustRaw → TrustSkill is allowed
+// (consolidation directly skips the curated step when a skill is the
+// right shape). Returns ErrNotFound if the observation doesn't exist.
+func (s *Service) Promote(ctx context.Context, in PromoteInput) error {
+	if in.ID == "" {
+		return fmt.Errorf("promote: id is required")
+	}
+	if !in.ToTier.Valid() {
+		return fmt.Errorf("promote: invalid to_tier %q", in.ToTier)
+	}
+	if strings.TrimSpace(in.WhyBetter) == "" {
+		return fmt.Errorf("promote: why_better is required")
+	}
+	if len(strings.TrimSpace(in.WhyBetter)) < minPromoteReasonLen {
+		return fmt.Errorf("promote: why_better must be at least %d chars — state a concrete signal, not filler", minPromoteReasonLen)
+	}
+	return s.store.SetTrustTier(ctx, in.ID, in.ToTier)
+}
+
 // Search runs BM25 retrieval, optionally fuses with vector similarity via
 // Reciprocal Rank Fusion, and applies the recency/importance/access ranker
 // on top. Hybrid mode activates automatically when an embedder is

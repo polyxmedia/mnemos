@@ -70,6 +70,16 @@ func (s *Server) registerTools() {
 			"restores current session state after a compaction — the 'oh shit' button.",
 	}, s.handleContext)
 
+	// Provenance / promotion (Bet 2 phase 2) ----------------------------
+	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+		Name: "mnemos_promote",
+		Description: "Promote an observation between trust tiers (raw → curated when " +
+			"tool-output content is validated, curated → skill when a pattern is worth " +
+			"reusing). Requires why_better: one sentence stating the concrete signal " +
+			"that justifies the tier change — Popper's falsifiability guard; filler " +
+			"reasons (<16 chars) are rejected.",
+	}, s.handlePromote)
+
 	// Agent supercharge --------------------------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_correct",
@@ -149,18 +159,21 @@ func (s *Server) registerTools() {
 // ---- mnemos_save -------------------------------------------------------
 
 type saveArgs struct {
-	Title      string   `json:"title" jsonschema:"short scannable label"`
-	Content    string   `json:"content" jsonschema:"the memory — structure as what/why/where/learned"`
-	Type       string   `json:"type" jsonschema:"decision|bugfix|pattern|preference|context|architecture|episodic|semantic|procedural|correction|convention"`
-	Tags       []string `json:"tags,omitempty"`
-	Importance int      `json:"importance,omitempty" jsonschema:"1..10, defaults to 5"`
-	TTLDays    int      `json:"ttl_days,omitempty"`
-	AgentID    string   `json:"agent_id,omitempty"`
-	Project    string   `json:"project,omitempty"`
-	SessionID  string   `json:"session_id,omitempty"`
-	ValidFrom  string   `json:"valid_from,omitempty" jsonschema:"RFC3339 fact-time lower bound"`
-	ValidUntil string   `json:"valid_until,omitempty" jsonschema:"RFC3339 fact-time upper bound"`
-	Rationale  string   `json:"rationale,omitempty" jsonschema:"the WHY — surfaced in prewarm"`
+	Title       string   `json:"title" jsonschema:"short scannable label"`
+	Content     string   `json:"content" jsonschema:"the memory — structure as what/why/where/learned"`
+	Type        string   `json:"type" jsonschema:"decision|bugfix|pattern|preference|context|architecture|episodic|semantic|procedural|correction|convention"`
+	Tags        []string `json:"tags,omitempty"`
+	Importance  int      `json:"importance,omitempty" jsonschema:"1..10, defaults to 5"`
+	TTLDays     int      `json:"ttl_days,omitempty"`
+	AgentID     string   `json:"agent_id,omitempty"`
+	Project     string   `json:"project,omitempty"`
+	SessionID   string   `json:"session_id,omitempty"`
+	ValidFrom   string   `json:"valid_from,omitempty" jsonschema:"RFC3339 fact-time lower bound"`
+	ValidUntil  string   `json:"valid_until,omitempty" jsonschema:"RFC3339 fact-time upper bound"`
+	Rationale   string   `json:"rationale,omitempty" jsonschema:"the WHY — surfaced in prewarm"`
+	SourceKind  string   `json:"source_kind,omitempty" jsonschema:"user|tool|agent_inference|dream|import — defaults to user"`
+	TrustTier   string   `json:"trust_tier,omitempty" jsonschema:"raw|curated|skill — defaults to curated; use raw for unverified tool output"`
+	DerivedFrom []string `json:"derived_from,omitempty" jsonschema:"parent observation IDs this memory was derived from"`
 }
 
 func (s *Server) handleSave(ctx context.Context, _ *mcpsdk.CallToolRequest, a saveArgs) (*mcpsdk.CallToolResult, any, error) {
@@ -168,7 +181,10 @@ func (s *Server) handleSave(ctx context.Context, _ *mcpsdk.CallToolRequest, a sa
 		Title: a.Title, Content: a.Content, Type: memory.ObsType(a.Type),
 		Tags: a.Tags, Importance: a.Importance, TTLDays: a.TTLDays,
 		AgentID: a.AgentID, Project: a.Project, SessionID: a.SessionID,
-		Rationale: a.Rationale,
+		Rationale:   a.Rationale,
+		SourceKind:  memory.SourceKind(a.SourceKind),
+		TrustTier:   memory.TrustTier(a.TrustTier),
+		DerivedFrom: a.DerivedFrom,
 	}
 	if t, err := parseTime(a.ValidFrom); err != nil {
 		return nil, nil, err
@@ -185,11 +201,14 @@ func (s *Server) handleSave(ctx context.Context, _ *mcpsdk.CallToolRequest, a sa
 		return nil, nil, err
 	}
 	return jsonResult(map[string]any{
-		"id":         res.Observation.ID,
-		"title":      res.Observation.Title,
-		"type":       string(res.Observation.Type),
-		"created_at": res.Observation.CreatedAt,
-		"deduped":    res.Deduped,
+		"id":           res.Observation.ID,
+		"title":        res.Observation.Title,
+		"type":         string(res.Observation.Type),
+		"source_kind":  string(res.Observation.SourceKind),
+		"trust_tier":   string(res.Observation.TrustTier),
+		"derived_from": res.Observation.DerivedFrom,
+		"created_at":   res.Observation.CreatedAt,
+		"deduped":      res.Deduped,
 	})
 }
 
@@ -204,6 +223,7 @@ type searchArgs struct {
 	AgentID       string   `json:"agent_id,omitempty"`
 	Project       string   `json:"project,omitempty"`
 	IncludeStale  bool     `json:"include_stale,omitempty"`
+	IncludeRaw    bool     `json:"include_raw,omitempty" jsonschema:"true to include quarantined raw-tier observations (tool output, agent inference)"`
 	AsOf          string   `json:"as_of,omitempty"`
 }
 
@@ -211,7 +231,9 @@ func (s *Server) handleSearch(ctx context.Context, _ *mcpsdk.CallToolRequest, a 
 	in := memory.SearchInput{
 		Query: a.Query, Type: memory.ObsType(a.Type), Tags: a.Tags,
 		MinImportance: a.MinImportance, Limit: a.Limit,
-		AgentID: a.AgentID, Project: a.Project, IncludeStale: a.IncludeStale,
+		AgentID: a.AgentID, Project: a.Project,
+		IncludeStale: a.IncludeStale,
+		IncludeRaw:   a.IncludeRaw,
 	}
 	if t, err := parseTime(a.AsOf); err != nil {
 		return nil, nil, err
@@ -225,14 +247,17 @@ func (s *Server) handleSearch(ctx context.Context, _ *mcpsdk.CallToolRequest, a 
 	hits := make([]map[string]any, 0, len(results))
 	for _, r := range results {
 		hits = append(hits, map[string]any{
-			"id":         r.Observation.ID,
-			"title":      r.Observation.Title,
-			"type":       string(r.Observation.Type),
-			"tags":       r.Observation.Tags,
-			"importance": r.Observation.Importance,
-			"score":      r.Score,
-			"snippet":    r.Snippet,
-			"created_at": r.Observation.CreatedAt,
+			"id":           r.Observation.ID,
+			"title":        r.Observation.Title,
+			"type":         string(r.Observation.Type),
+			"tags":         r.Observation.Tags,
+			"importance":   r.Observation.Importance,
+			"score":        r.Score,
+			"snippet":      r.Snippet,
+			"created_at":   r.Observation.CreatedAt,
+			"source_kind":  string(r.Observation.SourceKind),
+			"trust_tier":   string(r.Observation.TrustTier),
+			"derived_from": r.Observation.DerivedFrom,
 		})
 	}
 	return jsonResult(map[string]any{"results": hits})
@@ -385,6 +410,30 @@ func (s *Server) handleContext(ctx context.Context, _ *mcpsdk.CallToolRequest, a
 		"text":           block.Text,
 		"token_estimate": block.TokenEstimate,
 		"observations":   summariseObs(block.Observations),
+	})
+}
+
+// ---- mnemos_promote ----------------------------------------------------
+
+type promoteArgs struct {
+	ID        string `json:"id"`
+	ToTier    string `json:"to_tier" jsonschema:"raw|curated|skill"`
+	WhyBetter string `json:"why_better" jsonschema:"one sentence: what concrete signal justifies the tier change (min 16 chars)"`
+}
+
+func (s *Server) handlePromote(ctx context.Context, _ *mcpsdk.CallToolRequest, a promoteArgs) (*mcpsdk.CallToolResult, any, error) {
+	if err := s.cfg.Memory.Promote(ctx, memory.PromoteInput{
+		ID: a.ID, ToTier: memory.TrustTier(a.ToTier), WhyBetter: a.WhyBetter,
+	}); err != nil {
+		if errors.Is(err, memory.ErrNotFound) {
+			return nil, nil, fmt.Errorf("observation not found: %s", a.ID)
+		}
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{
+		"id":         a.ID,
+		"to_tier":    a.ToTier,
+		"why_better": a.WhyBetter,
 	})
 }
 

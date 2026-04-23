@@ -248,6 +248,7 @@ type SearchInput struct {
 	MinImportance int
 	Limit         int
 	IncludeStale  bool      // include invalidated / expired observations
+	IncludeRaw    bool      // include raw-tier (quarantined) observations
 	AsOf          time.Time // historical query; zero value means "now"
 }
 

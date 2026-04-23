@@ -37,6 +37,11 @@ type Writer interface {
 	Invalidate(ctx context.Context, id string, validUntil time.Time) error
 	Link(ctx context.Context, sourceID, targetID string, linkType LinkType) error
 	BumpAccess(ctx context.Context, id string) error
+	// SetTrustTier moves an observation between tiers (raw → curated → skill,
+	// or back to raw for a demotion). The promotion flow goes through the
+	// memory.Service's Promote method which adds validation on top; this
+	// is the primitive it sits on.
+	SetTrustTier(ctx context.Context, id string, tier TrustTier) error
 }
 
 // Maintenance is the housekeeping surface — time-based operations that

@@ -119,6 +119,125 @@ func TestTrustTierValid(t *testing.T) {
 	}
 }
 
+func TestRawTierExcludedFromDefaultSearch(t *testing.T) {
+	svc := newService(t, nil)
+	ctx := context.Background()
+
+	if _, err := svc.Save(ctx, memory.SaveInput{
+		Title: "curated fact", Content: "sqlite is pure-Go",
+		Type: memory.TypeDecision, Project: "p",
+	}); err != nil {
+		t.Fatalf("save curated: %v", err)
+	}
+	if _, err := svc.Save(ctx, memory.SaveInput{
+		Title: "tool-fetched", Content: "sqlite is pure-Go magic",
+		Type: memory.TypeContext, Project: "p",
+		SourceKind: memory.SourceTool, TrustTier: memory.TrustRaw,
+	}); err != nil {
+		t.Fatalf("save raw: %v", err)
+	}
+
+	hits, err := svc.Search(ctx, memory.SearchInput{Query: "sqlite"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, h := range hits {
+		if h.Observation.TrustTier == memory.TrustRaw {
+			t.Errorf("default search must exclude raw-tier, found %s", h.Observation.ID)
+		}
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 curated hit, got %d", len(hits))
+	}
+
+	hits, err = svc.Search(ctx, memory.SearchInput{Query: "sqlite", IncludeRaw: true})
+	if err != nil {
+		t.Fatalf("search with IncludeRaw: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Errorf("IncludeRaw must surface raw rows, got %d (want 2)", len(hits))
+	}
+}
+
+func TestPromoteMovesTierWhenJustified(t *testing.T) {
+	svc := newService(t, nil)
+	ctx := context.Background()
+
+	res, err := svc.Save(ctx, memory.SaveInput{
+		Title: "raw", Content: "unverified tool output",
+		Type: memory.TypeContext, Project: "p",
+		SourceKind: memory.SourceTool, TrustTier: memory.TrustRaw,
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	err = svc.Promote(ctx, memory.PromoteInput{
+		ID:        res.Observation.ID,
+		ToTier:    memory.TrustCurated,
+		WhyBetter: "user confirmed the fact matches their current setup",
+	})
+	if err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	got, _ := svc.Get(ctx, res.Observation.ID)
+	if got.TrustTier != memory.TrustCurated {
+		t.Errorf("expected TrustCurated after promote, got %q", got.TrustTier)
+	}
+}
+
+func TestPromoteRejectsThinReason(t *testing.T) {
+	svc := newService(t, nil)
+	ctx := context.Background()
+	res, _ := svc.Save(ctx, memory.SaveInput{
+		Title: "x", Content: "y", Type: memory.TypeContext, Project: "p",
+		TrustTier: memory.TrustRaw,
+	})
+
+	cases := []struct {
+		name string
+		why  string
+	}{
+		{"empty", ""},
+		{"whitespace", "   "},
+		{"too-short", "ok"},
+		{"just-under-threshold", "fifteen char.."},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := svc.Promote(ctx, memory.PromoteInput{
+				ID: res.Observation.ID, ToTier: memory.TrustCurated, WhyBetter: c.why,
+			})
+			if err == nil {
+				t.Errorf("promote must reject %q reason", c.why)
+			}
+		})
+	}
+}
+
+func TestPromoteRejectsInvalidTier(t *testing.T) {
+	svc := newService(t, nil)
+	err := svc.Promote(context.Background(), memory.PromoteInput{
+		ID: "anything", ToTier: memory.TrustTier("archived"),
+		WhyBetter: "this is a valid-length reason for testing",
+	})
+	if err == nil {
+		t.Error("invalid to_tier must error")
+	}
+}
+
+func TestPromoteNotFoundIsSurfaced(t *testing.T) {
+	svc := newService(t, nil)
+	err := svc.Promote(context.Background(), memory.PromoteInput{
+		ID: "nonexistent", ToTier: memory.TrustCurated,
+		WhyBetter: "valid reason with enough characters",
+	})
+	if err == nil {
+		t.Error("missing observation must error")
+	}
+}
+
 func TestProvenanceRoundTripThroughStorage(t *testing.T) {
 	svc := newService(t, nil)
 	ctx := context.Background()

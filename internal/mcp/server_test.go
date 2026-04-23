@@ -97,14 +97,14 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-func TestToolsListReturnsAllFourteen(t *testing.T) {
+func TestToolsListReturnsAllFifteen(t *testing.T) {
 	h := newHarness(t)
 	res, err := h.client.ListTools(context.Background(), &mcpsdk.ListToolsParams{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Tools) != 14 {
-		t.Errorf("want 14 tools, got %d", len(res.Tools))
+	if len(res.Tools) != 15 {
+		t.Errorf("want 15 tools, got %d", len(res.Tools))
 	}
 	expected := map[string]bool{
 		"mnemos_save": true, "mnemos_search": true, "mnemos_get": true,
@@ -113,7 +113,8 @@ func TestToolsListReturnsAllFourteen(t *testing.T) {
 		"mnemos_context": true,
 		"mnemos_correct": true, "mnemos_convention": true, "mnemos_touch": true,
 		"mnemos_skill_match": true, "mnemos_skill_save": true,
-		"mnemos_stats": true,
+		"mnemos_stats":   true,
+		"mnemos_promote": true,
 	}
 	for _, tool := range res.Tools {
 		delete(expected, tool.Name)
