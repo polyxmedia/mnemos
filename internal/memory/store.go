@@ -27,6 +27,10 @@ type Reader interface {
 	ListByTitleSimilarity(ctx context.Context, agentID, title string, limit int) ([]Observation, error)
 	FindByContentHash(ctx context.Context, agentID, project, hash string) (*Observation, error)
 	ListLinks(ctx context.Context, linkType LinkType, agentID string, limit int) ([]LinkEdge, error)
+	// ListByTrustTier returns live observations at the given tier, oldest
+	// first. The stale-raw rumination monitor uses it to surface raw-tier
+	// observations that have been sitting in quarantine too long.
+	ListByTrustTier(ctx context.Context, agentID string, tier TrustTier, limit int) ([]Observation, error)
 	Stats(ctx context.Context) (Stats, error)
 }
 

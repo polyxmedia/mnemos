@@ -50,6 +50,94 @@ func edge(source, target, sourceTitle, targetTitle string, at time.Time) memory.
 	}
 }
 
+func edgeWithTier(source, target, sourceTitle, targetTitle string, at time.Time, srcTier memory.TrustTier) memory.LinkEdge {
+	e := edge(source, target, sourceTitle, targetTitle, at)
+	e.SourceTrustTier = srcTier
+	return e
+}
+
+func TestContradictionMonitor_DowngradesRawOnlyEvidence(t *testing.T) {
+	when := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	// Two raw-tier contradictors. Unweighted count would be 2 (medium),
+	// but both are raw so weighted count is 2*0.5=1 → low.
+	reader := &fakeLinkReader{edges: []memory.LinkEdge{
+		edgeWithTier("raw1", "tgt", "maybe switch", "use sqlite", when, memory.TrustRaw),
+		edgeWithTier("raw2", "tgt", "also saw elsewhere", "use sqlite", when, memory.TrustRaw),
+	}}
+	m := &ContradictionDetectedMonitor{Links: reader, now: func() time.Time { return when }}
+
+	got, err := m.Detect(context.Background())
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 candidate, got %d", len(got))
+	}
+	if got[0].Severity != SeverityLow {
+		t.Errorf("raw-only contradictors should weight down to low, got %v", got[0].Severity)
+	}
+	if got[0].Reason == "" || !stringContains(got[0].Reason, "all raw-tier") {
+		t.Errorf("reason should note raw-only provenance, got %q", got[0].Reason)
+	}
+}
+
+func TestContradictionMonitor_MixedTierReasonNotesSplit(t *testing.T) {
+	when := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	// Two curated + one raw = weighted count 2 + 0 (raw/2 rounds down) = 2 (medium).
+	reader := &fakeLinkReader{edges: []memory.LinkEdge{
+		edgeWithTier("cur1", "tgt", "definitely wrong", "use sqlite", when, memory.TrustCurated),
+		edgeWithTier("cur2", "tgt", "also definitely wrong", "use sqlite", when, memory.TrustCurated),
+		edgeWithTier("raw1", "tgt", "some blog said", "use sqlite", when, memory.TrustRaw),
+	}}
+	m := &ContradictionDetectedMonitor{Links: reader, now: func() time.Time { return when }}
+	got, _ := m.Detect(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("want 1 candidate, got %d", len(got))
+	}
+	if got[0].Severity != SeverityMedium {
+		t.Errorf("2 curated + 1 raw should weight to medium, got %v", got[0].Severity)
+	}
+	if !stringContains(got[0].Reason, "2 curated, 1 raw") {
+		t.Errorf("reason should split curated/raw counts, got %q", got[0].Reason)
+	}
+}
+
+func TestContradictionSeverityWeighted(t *testing.T) {
+	cases := []struct {
+		curated, raw int
+		want         Severity
+	}{
+		{1, 0, SeverityLow},
+		{2, 0, SeverityMedium},
+		{3, 0, SeverityHigh},
+		{0, 1, SeverityLow},    // single raw floors at 1 → low
+		{0, 2, SeverityLow},    // 2 raw → weighted 1 → low
+		{0, 4, SeverityMedium}, // 4 raw → weighted 2 → medium
+		{0, 6, SeverityHigh},   // 6 raw → weighted 3 → high
+		{1, 2, SeverityMedium}, // 1 + 1 = 2 → medium
+	}
+	for _, c := range cases {
+		if got := contradictionSeverityWeighted(c.curated, c.raw); got != c.want {
+			t.Errorf("weighted(%d curated, %d raw) = %v, want %v", c.curated, c.raw, got, c.want)
+		}
+	}
+}
+
+// stringContains is a test helper that spells out strings.Contains so the
+// test imports list stays minimal.
+func stringContains(s, sub string) bool {
+	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestContradictionMonitor_FiresOnSingleLink(t *testing.T) {
 	when := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
 	reader := &fakeLinkReader{edges: []memory.LinkEdge{

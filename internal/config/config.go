@@ -78,6 +78,7 @@ type RuminationConfig struct {
 	StaleSkillFloor         float64 `toml:"stale_skill_floor"`         // staleness triggers when effectiveness is below this
 	CorrectionRepeatN       int     `toml:"correction_repeat_n"`       // N corrections on a topic *after* a matching skill was promoted → candidate
 	ContradictionThreshold  int     `toml:"contradiction_threshold"`   // min contradicts-links against a target before it becomes a candidate (default 1)
+	StaleRawDays            int     `toml:"stale_raw_days"`            // raw-tier observations unpromoted this many days → candidate (default 14)
 }
 
 // Default returns the baked-in defaults — what you get on first run.
@@ -117,6 +118,7 @@ func Default() Config {
 			StaleSkillFloor:         0.5,
 			CorrectionRepeatN:       3,
 			ContradictionThreshold:  1,
+			StaleRawDays:            14,
 		},
 	}
 }
@@ -265,6 +267,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Rumination.ContradictionThreshold == 0 {
 		cfg.Rumination.ContradictionThreshold = d.Rumination.ContradictionThreshold
+	}
+	if cfg.Rumination.StaleRawDays == 0 {
+		cfg.Rumination.StaleRawDays = d.Rumination.StaleRawDays
 	}
 }
 

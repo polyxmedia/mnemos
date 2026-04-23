@@ -270,8 +270,8 @@ func (s *obsStore) ListLinks(ctx context.Context, linkType memory.LinkType, agen
 		limit = 1000
 	}
 	query := `
-		SELECT l.source_id, src.title, src.agent_id, src.created_at,
-		       l.target_id, tgt.title, tgt.agent_id, tgt.created_at,
+		SELECT l.source_id, src.title, src.agent_id, src.created_at, src.trust_tier,
+		       l.target_id, tgt.title, tgt.agent_id, tgt.created_at, tgt.trust_tier,
 		       l.created_at
 		  FROM observation_links l
 		  JOIN observations src ON src.id = l.source_id
@@ -296,9 +296,10 @@ func (s *obsStore) ListLinks(ctx context.Context, linkType memory.LinkType, agen
 	var out []memory.LinkEdge
 	for rows.Next() {
 		var e memory.LinkEdge
+		var srcTier, tgtTier string
 		if err := rows.Scan(
-			&e.SourceID, &e.SourceTitle, &e.SourceAgent, &e.SourceCreatedAt,
-			&e.TargetID, &e.TargetTitle, &e.TargetAgent, &e.TargetCreatedAt,
+			&e.SourceID, &e.SourceTitle, &e.SourceAgent, &e.SourceCreatedAt, &srcTier,
+			&e.TargetID, &e.TargetTitle, &e.TargetAgent, &e.TargetCreatedAt, &tgtTier,
 			&e.LinkedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan link: %w", err)
@@ -307,9 +308,36 @@ func (s *obsStore) ListLinks(ctx context.Context, linkType memory.LinkType, agen
 		e.SourceCreatedAt = e.SourceCreatedAt.UTC()
 		e.TargetCreatedAt = e.TargetCreatedAt.UTC()
 		e.LinkedAt = e.LinkedAt.UTC()
+		e.SourceTrustTier = memory.TrustTier(srcTier)
+		e.TargetTrustTier = memory.TrustTier(tgtTier)
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ListByTrustTier returns live observations at the given tier, oldest
+// first. The StaleRawObservationMonitor uses this to surface raw-tier
+// observations that have been sitting in quarantine too long without a
+// promotion decision either way.
+func (s *obsStore) ListByTrustTier(ctx context.Context, agentID string, tier memory.TrustTier, limit int) ([]memory.Observation, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	args := []any{string(tier)}
+	query := selectObsSQL + ` WHERE trust_tier = ? AND invalidated_at IS NULL`
+	if agentID != "" {
+		query += ` AND agent_id = ?`
+		args = append(args, agentID)
+	}
+	query += ` ORDER BY created_at ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list by trust_tier: %w", err)
+	}
+	defer rows.Close()
+	return scanObsList(rows)
 }
 
 func (s *obsStore) Prune(ctx context.Context, now time.Time) (int64, error) {

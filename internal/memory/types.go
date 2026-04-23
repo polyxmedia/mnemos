@@ -314,10 +314,12 @@ type LinkEdge struct {
 	SourceTitle     string
 	SourceAgent     string
 	SourceCreatedAt time.Time
+	SourceTrustTier TrustTier
 	TargetID        string
 	TargetTitle     string
 	TargetAgent     string
 	TargetCreatedAt time.Time
+	TargetTrustTier TrustTier
 	LinkedAt        time.Time
 }
 

@@ -70,6 +70,9 @@ func (f *fakeMemoryReader) FindByContentHash(ctx context.Context, agentID, proje
 func (f *fakeMemoryReader) ListLinks(ctx context.Context, linkType memory.LinkType, agentID string, limit int) ([]memory.LinkEdge, error) {
 	return nil, nil
 }
+func (f *fakeMemoryReader) ListByTrustTier(ctx context.Context, agentID string, tier memory.TrustTier, limit int) ([]memory.Observation, error) {
+	return nil, nil
+}
 func (f *fakeMemoryReader) Stats(ctx context.Context) (memory.Stats, error) {
 	return memory.Stats{}, nil
 }
