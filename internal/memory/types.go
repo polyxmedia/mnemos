@@ -44,6 +44,66 @@ func (t ObsType) Valid() bool {
 	return false
 }
 
+// SourceKind identifies who or what produced an observation. Bet 2
+// provenance substrate — every save knows where its content came from so
+// downstream code can quarantine untrusted inputs and surface chains on
+// search.
+type SourceKind string
+
+const (
+	// SourceUser: explicit user-authored save (typed a correction, asked
+	// to remember a decision). Highest trust by default.
+	SourceUser SourceKind = "user"
+	// SourceTool: content derived from a tool call's output — web fetch,
+	// file read, MCP server response. Untrusted by default.
+	SourceTool SourceKind = "tool"
+	// SourceAgentInference: the agent's own conclusion drawn from the
+	// conversation. Medium trust — still the agent talking, not the user.
+	SourceAgentInference SourceKind = "agent_inference"
+	// SourceDream: produced by the dream / consolidation pass, typically
+	// a skill or abstraction derived from multiple parent observations.
+	SourceDream SourceKind = "dream"
+	// SourceImport: pulled in from another store (vault sync, skill pack
+	// install, migration). Trust inherited from the source system.
+	SourceImport SourceKind = "import"
+)
+
+// Valid reports whether sk is a recognised source kind.
+func (sk SourceKind) Valid() bool {
+	switch sk {
+	case SourceUser, SourceTool, SourceAgentInference, SourceDream, SourceImport:
+		return true
+	}
+	return false
+}
+
+// TrustTier is retrieval's coarse filter on an observation. Callers that
+// do not ask for raw content should only see curated and skill rows; raw
+// is the quarantine zone where tool-derived and agent-inferred content
+// sits until promoted.
+type TrustTier string
+
+const (
+	// TrustRaw: stored, not yet validated. Excluded from prewarm and
+	// default search; visible only through explicit raw-tier queries.
+	TrustRaw TrustTier = "raw"
+	// TrustCurated: the default. Surfaced in prewarm, search, replay.
+	TrustCurated TrustTier = "curated"
+	// TrustSkill: promoted into a procedural skill via the dream pass.
+	// Still returned like a curated observation but flagged so consumers
+	// can choose to surface skills preferentially.
+	TrustSkill TrustTier = "skill"
+)
+
+// Valid reports whether t is a recognised trust tier.
+func (t TrustTier) Valid() bool {
+	switch t {
+	case TrustRaw, TrustCurated, TrustSkill:
+		return true
+	}
+	return false
+}
+
 // LinkType classifies an edge between two observations. 'supersedes' drives
 // temporal invalidation: when A supersedes B, B's valid_until is set to A's
 // valid_from.
@@ -116,6 +176,14 @@ type Observation struct {
 	// LastExportedAt tracks when this observation was written to the
 	// Obsidian vault. NULL means never exported.
 	LastExportedAt *time.Time
+
+	// SourceKind, TrustTier, and DerivedFrom form the provenance
+	// substrate (Bet 2 phase 1). SourceKind records who produced the
+	// content; TrustTier gates retrieval; DerivedFrom chains parent
+	// observation IDs so a raw→curated→skill DAG can be traversed.
+	SourceKind  SourceKind
+	TrustTier   TrustTier
+	DerivedFrom []string
 }
 
 // Live reports whether the observation is currently valid at t.
@@ -153,6 +221,13 @@ type SaveInput struct {
 
 	// Rationale for decisions/conventions/architecture.
 	Rationale string
+
+	// Provenance fields (Bet 2 phase 1). Unspecified values default to
+	// SourceUser / TrustCurated / nil in the service — back-compat with
+	// every existing caller that predates the substrate.
+	SourceKind  SourceKind
+	TrustTier   TrustTier
+	DerivedFrom []string
 }
 
 // SaveResult is the outcome of Save: the resulting observation plus whether

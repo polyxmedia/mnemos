@@ -99,6 +99,21 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	agent := defaultString(in.AgentID, "default")
 	hash := hashContent(in.Type, in.Title, in.Content, in.Rationale, in.Structured)
 
+	sourceKind := in.SourceKind
+	if sourceKind == "" {
+		sourceKind = SourceUser
+	}
+	if !sourceKind.Valid() {
+		return nil, fmt.Errorf("save: invalid source_kind %q", sourceKind)
+	}
+	trustTier := in.TrustTier
+	if trustTier == "" {
+		trustTier = TrustCurated
+	}
+	if !trustTier.Valid() {
+		return nil, fmt.Errorf("save: invalid trust_tier %q", trustTier)
+	}
+
 	// Dedup: if the same (agent, project, content_hash) already lives, bump
 	// access and return without writing. Invalidated rows don't count — a
 	// re-save can legitimately resurrect a superseded fact.
@@ -127,6 +142,9 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 		ContentHash: hash,
 		Structured:  in.Structured,
 		Rationale:   in.Rationale,
+		SourceKind:  sourceKind,
+		TrustTier:   trustTier,
+		DerivedFrom: in.DerivedFrom,
 	}
 	if in.TTLDays > 0 {
 		t := now.AddDate(0, 0, in.TTLDays)

@@ -24,7 +24,8 @@ const obsColumns = `
 	created_at, valid_from, valid_until,
 	invalidated_at, expires_at,
 	content_hash, structured, rationale,
-	embedding, embedding_model, last_exported_at`
+	embedding, embedding_model, last_exported_at,
+	source_kind, trust_tier, derived_from`
 
 const selectObsSQL = `SELECT ` + obsColumns + ` FROM observations`
 
@@ -33,14 +34,30 @@ func (s *obsStore) Insert(ctx context.Context, o *memory.Observation) error {
 	if err != nil {
 		return fmt.Errorf("marshal tags: %w", err)
 	}
+	// Provenance fields default at the service layer, but defend in depth
+	// here so a store caller that bypasses the service (tests, migrations)
+	// still ends up with CHECK-constraint-valid rows.
+	sourceKind := o.SourceKind
+	if sourceKind == "" {
+		sourceKind = memory.SourceUser
+	}
+	trustTier := o.TrustTier
+	if trustTier == "" {
+		trustTier = memory.TrustCurated
+	}
+	derived, err := json.Marshal(coalesceSliceStr(o.DerivedFrom))
+	if err != nil {
+		return fmt.Errorf("marshal derived_from: %w", err)
+	}
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO observations (
 			id, session_id, agent_id, project,
 			title, content, obs_type, tags, importance,
 			created_at, valid_from, valid_until, expires_at,
 			content_hash, structured, rationale,
-			embedding, embedding_model
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			embedding, embedding_model,
+			source_kind, trust_tier, derived_from
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		o.ID,
 		nullableStr(o.SessionID),
 		o.AgentID,
@@ -59,6 +76,9 @@ func (s *obsStore) Insert(ctx context.Context, o *memory.Observation) error {
 		nullableStr(o.Rationale),
 		encodeVector(o.Embedding),
 		nullableStr(o.EmbeddingModel),
+		string(sourceKind),
+		string(trustTier),
+		string(derived),
 	)
 	if err != nil {
 		return fmt.Errorf("insert observation: %w", err)
@@ -457,24 +477,29 @@ type obsScanDest struct {
 	lastExportedAt            *sql.NullTime
 	tagsJSON                  *string
 	embedding                 *[]byte
+	sourceKind, trustTier     *string
+	derivedFromJSON           *string
 }
 
 func newObsScanDest(o *memory.Observation) obsScanDest {
 	return obsScanDest{
-		o:              o,
-		sessID:         &sql.NullString{},
-		project:        &sql.NullString{},
-		contentHash:    &sql.NullString{},
-		structured:     &sql.NullString{},
-		rationale:      &sql.NullString{},
-		embeddingModel: &sql.NullString{},
-		lastAcc:        &sql.NullTime{},
-		validUntil:     &sql.NullTime{},
-		invalidatedAt:  &sql.NullTime{},
-		expiresAt:      &sql.NullTime{},
-		lastExportedAt: &sql.NullTime{},
-		tagsJSON:       new(string),
-		embedding:      new([]byte),
+		o:               o,
+		sessID:          &sql.NullString{},
+		project:         &sql.NullString{},
+		contentHash:     &sql.NullString{},
+		structured:      &sql.NullString{},
+		rationale:       &sql.NullString{},
+		embeddingModel:  &sql.NullString{},
+		lastAcc:         &sql.NullTime{},
+		validUntil:      &sql.NullTime{},
+		invalidatedAt:   &sql.NullTime{},
+		expiresAt:       &sql.NullTime{},
+		lastExportedAt:  &sql.NullTime{},
+		tagsJSON:        new(string),
+		embedding:       new([]byte),
+		sourceKind:      new(string),
+		trustTier:       new(string),
+		derivedFromJSON: new(string),
 	}
 }
 
@@ -487,6 +512,7 @@ func (d obsScanDest) args() []any {
 		d.invalidatedAt, d.expiresAt,
 		d.contentHash, d.structured, d.rationale,
 		d.embedding, d.embeddingModel, d.lastExportedAt,
+		d.sourceKind, d.trustTier, d.derivedFromJSON,
 	}
 }
 
@@ -504,6 +530,9 @@ func (d obsScanDest) finalise() {
 	d.o.LastExportedAt = nullableTimePtr(*d.lastExportedAt)
 	d.o.Embedding = decodeVector(*d.embedding)
 	_ = json.Unmarshal([]byte(*d.tagsJSON), &d.o.Tags)
+	d.o.SourceKind = memory.SourceKind(*d.sourceKind)
+	d.o.TrustTier = memory.TrustTier(*d.trustTier)
+	_ = json.Unmarshal([]byte(*d.derivedFromJSON), &d.o.DerivedFrom)
 }
 
 func scanObs(row scanner) (*memory.Observation, error) {
