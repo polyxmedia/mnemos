@@ -22,15 +22,20 @@ func (s *Server) registerTools() {
 	// Save / search / get / delete / link --------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_save",
-		Description: "Persist an agent-curated observation (decision, bugfix, pattern, preference, " +
-			"context, architecture, episodic, semantic, procedural, correction, convention). " +
-			"Deliberately curated: save only things worth remembering later.",
+		Description: "Call AFTER any non-obvious decision, architectural choice, or surprise in this " +
+			"project — the kind of thing the next session would benefit from knowing. Persist an " +
+			"agent-curated observation (decision, bugfix, pattern, preference, context, architecture, " +
+			"episodic, semantic, procedural, correction, convention). Deliberately curated: save things " +
+			"worth remembering later, not routine task progress.",
 	}, s.handleSave)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_search",
-		Description: "Hybrid BM25 + vector ranked search with recency/importance/access multipliers. " +
-			"Default scope is valid-now (invalidated/expired hidden). Returns compact hits with snippet.",
+		Description: "Call BEFORE any non-trivial code change, design decision, or refactor in this " +
+			"project to surface prior decisions, conventions, and corrections. Skipping risks repeating " +
+			"known mistakes already recorded. Hybrid BM25 + vector ranked search with recency/importance/" +
+			"access multipliers. Default scope is valid-now (invalidated/expired hidden). " +
+			"Cheap; call liberally with the user's request as the query.",
 	}, s.handleSearch)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
@@ -66,8 +71,10 @@ func (s *Server) registerTools() {
 	// Context ------------------------------------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_context",
-		Description: "Token-budgeted context. Default mode: query-based search-and-pack. Mode='recovery' " +
-			"restores current session state after a compaction — the 'oh shit' button.",
+		Description: "Call when starting a substantial task to assemble a token-budgeted context block " +
+			"(conventions + corrections + prior decisions matching the goal). Cheaper than reading the " +
+			"raw store. Default mode: query-based search-and-pack. Mode='recovery' restores current " +
+			"session state after a compaction — the 'oh shit' button.",
 	}, s.handleContext)
 
 	// Provenance / promotion (Bet 2 phase 2) ----------------------------
@@ -83,14 +90,18 @@ func (s *Server) registerTools() {
 	// Agent supercharge --------------------------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_correct",
-		Description: "Record a correction: tried + wrong_because + fix + trigger_context. Auto-surfaced " +
-			"in session pre-warm when the session goal matches. The anti-repeat-mistakes loop.",
+		Description: "Call THE MOMENT the user corrects you (\"no\", \"don't\", \"that's wrong\", " +
+			"\"actually\") or you discover a tried-approach failed. Record: tried + wrong_because + fix + " +
+			"trigger_context. Auto-surfaced in session pre-warm when the session goal matches. " +
+			"This is the anti-repeat-mistakes loop — every skipped call is a future repeat.",
 	}, s.handleCorrect)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_convention",
-		Description: "Declare a project convention. Auto-injected at every session_start for the " +
-			"matching project. Declared once, applied forever.",
+		Description: "Call when the user states a project rule (\"we always\", \"never\", \"the " +
+			"convention here is\") or you derive one from repeated patterns. Declares a project " +
+			"convention; auto-injected at every session_start for the matching project. " +
+			"Declared once, applied forever.",
 	}, s.handleConvention)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{

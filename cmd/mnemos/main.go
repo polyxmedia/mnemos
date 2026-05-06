@@ -59,6 +59,7 @@ var commands = map[string]handler{
 	"init":      runInit,
 	"update":    runUpdate,
 	"doctor":    runDoctor,
+	"verify":    runVerify,
 	"-v":        runVersion,
 	"--version": runVersion,
 	"-h":        runHelp,
@@ -104,6 +105,9 @@ Commands:
   init                   Register mnemos with Claude Code / Cursor / Windsurf
   update [--yes]         Download the latest release and replace this binary
   doctor                 Check installation health
+  verify retrieval       Probe the store with fixture queries (precision@K)
+  verify behavior        A/B replay scenarios with mnemos on vs off (lift)
+  verify all             Run both
   config                 Print the current configuration
   version                Print the binary version
 

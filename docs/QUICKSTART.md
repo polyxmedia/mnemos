@@ -16,7 +16,7 @@ The script detects your OS and architecture, downloads the binary to `~/.local/b
 mnemos doctor
 ```
 
-You should see green checkmarks for binary, config, storage, and any agent clients it detected (Claude Code, Cursor, Windsurf).
+You should see green checkmarks for binary, config, storage, and any agent clients it detected.
 
 ## 3. Install the Claude Code skill (recommended)
 
@@ -32,11 +32,11 @@ curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/.claude/skil
 
 ## 4. Restart your agent
 
-Close and reopen Claude Code (or Cursor, or whichever MCP-capable agent you use). On next launch, 14 new `mnemos_*` tools become available.
+Close and reopen Claude Code (or Cursor, or whichever MCP-capable agent you use). On next launch, 15 baseline `mnemos_*` tools become available, or 19 when rumination is enabled.
 
 ## 5. First session
 
-From your agent:
+With Claude Code after `mnemos init`, the startup hook opens a session automatically and injects a `mnemos_session_id:` line into context. For other MCP clients, or if hooks are disabled, start a session from your agent:
 
 ```
 Call mnemos_session_start with project="my-repo" goal="fix the login bug".
@@ -109,7 +109,7 @@ $ mnemos skill list
 ## Troubleshooting
 
 **`mnemos init` didn't find my agent client.**
-The script looks for `~/.claude.json`, `~/.cursor/mcp.json`, and `~/.codeium/windsurf/mcp_config.json`. If your client uses a different path, you can wire mnemos manually:
+The script looks for Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI config paths. If your client uses a different path, you can wire mnemos manually:
 
 ```json
 {

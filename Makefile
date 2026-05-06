@@ -3,7 +3,7 @@ PKG     := github.com/polyxmedia/mnemos
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 
-.PHONY: build test lint fmt install clean cover release release-local release-dry
+.PHONY: build test lint fmt install clean cover release release-local release-dry verify verify-retrieval verify-behavior
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/mnemos
@@ -27,6 +27,21 @@ install: build
 
 clean:
 	rm -rf bin/ dist/ coverage.out coverage.html
+
+# ---- efficacy verification ----------------------------------------------
+# Two checks against the live store:
+#   verify-retrieval — cheap, no API tokens, runs every commit
+#   verify-behavior  — expensive, runs claude -p, nightly / pre-release
+#   verify           — both, using the seed fixtures in verify/
+
+verify-retrieval: build
+	bin/$(BINARY) verify retrieval
+
+verify-behavior: build
+	bin/$(BINARY) verify behavior
+
+verify: build
+	bin/$(BINARY) verify all
 
 # ---- release -------------------------------------------------------------
 # Primary release flow: tag + push → GH Actions runs goreleaser.

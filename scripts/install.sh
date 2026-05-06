@@ -55,7 +55,7 @@ latest_version() {
 fallback_from_source() {
   log "no released binaries yet — falling back to \`go install\`"
   if ! command -v go >/dev/null 2>&1; then
-    err "go toolchain not found. install Go 1.23+ or wait for a released binary."
+    err "go toolchain not found. install Go 1.25+ or wait for a released binary."
   fi
   local gobin="${GOPATH:-$HOME/go}/bin"
   if ! GOBIN="$gobin" go install github.com/polyxmedia/mnemos/cmd/mnemos@latest; then

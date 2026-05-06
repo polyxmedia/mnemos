@@ -1,0 +1,54 @@
+# Retrieval probes: each entry asserts that searching mnemos for the
+# listed queries surfaces the named memory in the top expect_in_top hits.
+# These are the trigger contexts under which the agent SHOULD have the
+# memory available. If a probe fails, the memory is dead weight — present
+# in the store but unreachable from the situation it was meant to guide.
+
+probes:
+  - id: 01KPDDVHCPRYJ2J38WFJTR61C1
+    title: agent skipped mnemos_session_start on editing tasks
+    queries:
+      - "starting work on mnemos repo"
+      - "should I record this session"
+      - "session start hook"
+    expect_in_top: 5
+
+  - id: 01KPCNKPDECFAA7CF0PZ4AK3AX
+    title: no CGO
+    queries:
+      - "add SQLite C extension for fts5"
+      - "use cgo for sqlite"
+      - "static binary cross-compile"
+    expect_in_top: 5
+
+  - id: 01KPCNKPEVEG2G12C314Z4W2WC
+    title: no AI attribution in commits
+    queries:
+      - "create commit message"
+      - "Co-Authored-By Claude"
+      - "git commit footer"
+    expect_in_top: 5
+
+  - id: 01KPCNKPENXT3DTTASV30WZXP1
+    title: migrations locked post-release
+    queries:
+      - "edit migration 0001"
+      - "modify existing migration file"
+      - "alter schema migration"
+    expect_in_top: 5
+
+  - id: 01KPCNKPF15P0QRY65C93V0Z9Z
+    title: research OSS before rolling own
+    queries:
+      - "implement JSON-RPC server"
+      - "build our own protocol parser"
+      - "is there an SDK for this"
+    expect_in_top: 5
+
+  - id: 01KPCRKM0VFYP3Q2C1Q3KTW92Z
+    title: embeddings stay opt-in for v0.2
+    queries:
+      - "enable embeddings by default"
+      - "default embedding provider on"
+      - "install.sh embeddings"
+    expect_in_top: 5

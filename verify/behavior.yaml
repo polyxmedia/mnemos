@@ -1,0 +1,81 @@
+# Behavior replay (v2): hermetic A/B per scenario.
+# - On-arm runner pulls a memory block from `mnemos hook user-prompt` and
+#   passes it via --append-system-prompt (claude -p doesn't fire the
+#   UserPromptSubmit hook). Plus the global SessionStart prewarm hook
+#   surfaces project conventions/corrections.
+# - Off-arm sets MNEMOS_DISABLED=1 so every globally-installed mnemos hook
+#   no-ops, and uses --strict-mcp-config + empty mcp config.
+# - Triggers are calibrated to elicit responses that EXPOSE whether memory
+#   was applied (not "draft a commit" with no diff — that's trivial pass).
+
+arms:
+  on:
+    cmd:
+      - /Users/andrefigueira/Code/mnemos/verify/runners/on.sh
+      - "{{trigger}}"
+  off:
+    cmd:
+      - /Users/andrefigueira/Code/mnemos/verify/runners/off.sh
+      - "{{trigger}}"
+
+scenarios:
+  - name: session_start_on_edit
+    memory_id: 01KPDDVHCPRYJ2J38WFJTR61C1
+    trigger: "I'm starting a new task on the mnemos Go codebase — please orient yourself before I describe the change."
+    runs: 5
+    # Real tool_use entries only; loose substring would match the system-init
+    # tool list and trivially pass the on-arm.
+    pass_when:
+      contains_any:
+        - '"name":"mcp__mnemos__mnemos_session_start"'
+        - '"name":"mcp__mnemos__mnemos_search"'
+        - '"name":"mcp__mnemos__mnemos_context"'
+
+  - name: no_ai_attribution_in_commit
+    memory_id: 01KPCNKPEVEG2G12C314Z4W2WC
+    trigger: "Write a git commit message for this diff:\n```\n+func RankResults(results []Hit) []Hit {\n+\treturn sortByScore(results)\n+}\n```\nReturn ONLY the commit message text, nothing else."
+    runs: 5
+    pass_when:
+      lacks_all:
+        - Co-Authored-By
+        - "Generated with"
+        - "🤖"
+        - "Claude Code"
+
+  - name: no_cgo_proposal
+    memory_id: 01KPCNKPDECFAA7CF0PZ4AK3AX
+    trigger: "Write a Go function that opens a SQLite database with full-text search (fts5) enabled. Include the import statement you'd use."
+    runs: 5
+    pass_when:
+      contains_any:
+        - modernc.org/sqlite
+        - "no CGO"
+        - "pure Go"
+        - "pure-Go"
+
+  - name: migration_locked_refused
+    memory_id: 01KPCNKPENXT3DTTASV30WZXP1
+    trigger: "I want to add a 'priority INTEGER DEFAULT 0' column to internal/storage/migrations/0001_init.sql in the mnemos repo. Show me the patch I'd apply."
+    runs: 5
+    pass_when:
+      contains_any:
+        - new migration
+        - "0002"
+        - locked
+        - "shouldn't edit"
+        - "should not edit"
+        - "do not edit"
+
+  - name: oss_first_for_protocol
+    memory_id: 01KPCNKPF15P0QRY65C93V0Z9Z
+    trigger: "Write a Go implementation of a JSON-RPC 2.0 stdio server (request/response framing, Content-Length headers, the works). Show 30+ lines of code."
+    runs: 5
+    pass_when:
+      contains_any:
+        - go-sdk
+        - modelcontextprotocol
+        - "official SDK"
+        - "existing library"
+        - "library exists"
+        - "rather than hand-rolling"
+        - "before rolling"

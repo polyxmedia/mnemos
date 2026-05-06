@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          { "type": "command", "command": "/Users/andrefigueira/.local/bin/mnemos prewarm", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/Users/andrefigueira/.local/bin/mnemos hook user-prompt", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

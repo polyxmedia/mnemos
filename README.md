@@ -31,7 +31,9 @@ Record three related corrections and mnemos promotes them into a skill. Replay a
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/install.sh | bash
-mnemos init
+# If your current shell has not picked up the PATH update yet, use the
+# full doctor command printed by the installer.
+mnemos doctor
 
 # Claude Code users: install the mnemos skill so the agent
 # actually records back to the store instead of silently editing.
@@ -73,7 +75,7 @@ Three primitives compose into a compounding feedback cycle. Each one is useful o
 | Go | `go install github.com/polyxmedia/mnemos/cmd/mnemos@latest` |
 | Manual | [Download a release binary](https://github.com/polyxmedia/mnemos/releases) |
 
-All paths end with `mnemos init`, which auto-wires Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Then restart your agent.
+The one-liner runs `mnemos init` for you. If you install with `go install` or a manual release binary, run `mnemos init` once to auto-wire Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Then restart your agent.
 
 **Updating:** `mnemos update` downloads the latest release, verifies its sha256 against the published `checksums.txt`, and replaces the running binary in place. Add `--yes` to skip the confirmation prompt.
 
@@ -92,7 +94,7 @@ $ mnemos doctor
   all checks passed.
 ```
 
-From your agent (first session on a project):
+With Claude Code after `mnemos init`, the startup hook opens a session automatically and injects `mnemos_session_id` into context. For other MCP clients, or if hooks are disabled, start a session from your agent:
 
 ```
 mnemos_session_start(project="my-repo", goal="fix the login bug")
@@ -144,7 +146,7 @@ mnemos_correct(
 
 Restart Claude Code. The `mnemos_*` tools appear on next session.
 
-`mnemos init` also writes a `SessionStart` hook to `~/.claude/settings.json` (honours `CLAUDE_CONFIG_DIR`) that calls `mnemos prewarm` at session startup. Claude Code injects the prewarm block as additional context, so conventions + recent sessions + matching corrections land in front of the agent on every launch without the agent having to call `mnemos_session_start` first. Manual shape:
+`mnemos init` also writes a `SessionStart` hook to `~/.claude/settings.json` (honours `CLAUDE_CONFIG_DIR`) that calls `mnemos prewarm` at session startup. `mnemos prewarm` opens a session by default and prints `mnemos_session_id`, and Claude Code injects the prewarm block as additional context. Conventions + recent sessions + matching corrections land in front of the agent on every launch without the agent having to call `mnemos_session_start` first. Manual shape:
 
 ```json
 {
@@ -211,7 +213,7 @@ args    = ["serve"]
 
 ### Zed / Continue / any MCP-compatible client
 
-Anything that speaks MCP over stdio can talk to Mnemos. Point the client's tool config at the `mnemos serve` binary. The server advertises 14 tools + 3 resources on the `initialize` handshake.
+Anything that speaks MCP over stdio can talk to Mnemos. Point the client's tool config at the `mnemos serve` binary. The server advertises 15 baseline tools + 3 resources on the `initialize` handshake, or 19 tools when rumination is enabled.
 
 ### Remote / team setup (HTTP)
 
@@ -222,6 +224,37 @@ MNEMOS_API_KEY=$(openssl rand -hex 32) mnemos serve --http :8080
 ```
 
 Then use `pkg/client` from Go, or call `POST /v1/observations` and friends directly. Full reference in [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
+
+## Does it actually help? Measured.
+
+Memory systems are easy to claim and hard to verify. Mnemos ships a self-test harness so the question is answerable, not a vibe.
+
+```bash
+mnemos verify retrieval   # cheap: do memories surface for their trigger queries?
+mnemos verify behavior    # expensive: does the agent behave differently on/off?
+mnemos verify all         # both
+```
+
+**Retrieval probe.** For each high-importance memory in the store, the fixture lists trigger queries and an expected top-K. The harness runs `mnemos_search` and asserts the memory ID is in the top hits. Cheap, no API tokens, runs every commit.
+
+**Behavior A/B.** For each scenario, the harness runs the trigger prompt N times under two arms: on (full mnemos surface, hooks enabled, MCP tools available) and off (`MNEMOS_DISABLED=1` to no-op every globally-installed mnemos hook, `--strict-mcp-config` plus an empty MCP config to kill the tool surface). Auth and other settings stay intact. Off-arm transcripts are spot-checked for mnemos artefacts as a contamination canary.
+
+**Numbers from a 5-scenario, n=5, paired run against the dev store:**
+
+```
+scenario                        on    off   lift
+session_start_on_edit           5/5   0/5   +100%
+no_ai_attribution_in_commit     5/5   5/5   +0%
+no_cgo_proposal                 5/5   5/5   +0%
+migration_locked_refused        5/5   5/5   +0%
+oss_first_for_protocol          5/5   0/5   +100%
+                                ─────────   ─────
+overall                         25/25 15/25 +40%
+```
+
+Read this honestly. Mnemos wins decisively where the convention is contrarian or project-specific (`oss_first_for_protocol`: the off-arm hand-rolls a JSON-RPC server every time; the on-arm reaches for the official SDK every time). It also wins on the recursive case (`session_start_on_edit`: the off-arm never calls a single mnemos tool when starting work; the on-arm reliably orients itself by calling `mnemos_session_start` or `mnemos_search`). On widely-known best practices (no AI attribution, pure-Go SQLite, no editing shipped migrations) Claude already gets it right from training, so mnemos adds no measurable lift, and importantly does no harm.
+
+Bottom line: memory pays where the model's prior is wrong or absent; nowhere else. The harness exists so future changes are evaluated against a real number, not a feeling. Fixtures and runner scripts are at [`verify/`](verify/).
 
 ## How it compares
 
@@ -280,9 +313,9 @@ Mnemos is new (v0.1.x, early adoption). Table based on public documentation as o
 | `mnemos config` | Print current config |
 | `mnemos version` | Print version |
 
-## MCP tools (18)
+## MCP tools (15 baseline, 19 with rumination)
 
-`mnemos_save` · `mnemos_search` · `mnemos_get` · `mnemos_delete` · `mnemos_link` · `mnemos_session_start` · `mnemos_session_end` · `mnemos_context` · `mnemos_correct` · `mnemos_convention` · `mnemos_touch` · `mnemos_skill_match` · `mnemos_skill_save` · `mnemos_stats` · `mnemos_ruminate_list` · `mnemos_ruminate_pack` · `mnemos_ruminate_resolve` · `mnemos_ruminate_dismiss`
+`mnemos_save` · `mnemos_search` · `mnemos_get` · `mnemos_delete` · `mnemos_link` · `mnemos_session_start` · `mnemos_session_end` · `mnemos_context` · `mnemos_promote` · `mnemos_correct` · `mnemos_convention` · `mnemos_touch` · `mnemos_skill_match` · `mnemos_skill_save` · `mnemos_stats` · `mnemos_ruminate_list` · `mnemos_ruminate_pack` · `mnemos_ruminate_resolve` · `mnemos_ruminate_dismiss`
 
 See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for parameter details. The four `mnemos_ruminate_*` tools are exposed only when `[rumination].enabled = true` in config (the default).
 
@@ -305,7 +338,7 @@ Three guardrails:
 
 ### What happens after I do `git commit` or close my terminal?
 
-Nothing changes. Mnemos stores everything in `~/.mnemos/mnemos.db` (a SQLite file). Starts when your agent calls `mnemos_session_start`, runs while your agent is live, idles otherwise. No daemon needed.
+Nothing changes. Mnemos stores everything in `~/.mnemos/mnemos.db` (a SQLite file). With Claude Code hooks, `mnemos prewarm` opens the session automatically; other clients start one with `mnemos_session_start`. No daemon needed.
 
 ### Is my data sent anywhere?
 
@@ -392,7 +425,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Testing + release
 
 ```bash
-make test           # -race, full suite across 15 packages
+make test           # -race, full suite
 make cover          # coverage.html report
 make lint           # golangci-lint
 make release V=v0.2.0   # tag + push → GH Actions runs goreleaser

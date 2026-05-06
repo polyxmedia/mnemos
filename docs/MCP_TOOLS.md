@@ -1,6 +1,6 @@
 # MCP tools reference
 
-All tool names are namespaced with `mnemos_`. Every tool has a JSON Schema in its definition — your agent client shows these automatically.
+All tool names are namespaced with `mnemos_`. Every tool has a JSON Schema in its definition — your agent client shows these automatically. A standard server exposes 15 core tools; enabling rumination adds 4 more.
 
 ## Save & retrieve
 
@@ -17,8 +17,12 @@ Store an agent-curated observation.
 | `ttl_days` |   | auto-expire |
 | `agent_id`, `project`, `session_id` |   | scoping |
 | `valid_from`, `valid_until` |   | ISO-8601 fact-time bounds |
+| `source_kind` |   | `user`, `tool`, `agent_inference`, `dream`, `import`; defaults to `user` |
+| `trust_tier` |   | `raw`, `curated`, `skill`; defaults to `curated` |
+| `derived_from` |   | parent observation IDs |
+| `rationale` |   | why this memory matters |
 
-Returns `{id, title, type, created_at, deduped}`. `deduped: true` means an identical observation already existed; its access counter was bumped instead.
+Returns `{id, title, type, source_kind, trust_tier, derived_from, created_at, deduped}`. `deduped: true` means an identical live observation already existed; its access counter was bumped instead.
 
 ### `mnemos_search`
 BM25 + importance + recency + access-frequency ranked search.
@@ -32,9 +36,10 @@ BM25 + importance + recency + access-frequency ranked search.
 | `limit` |   | default 20, max 100 |
 | `agent_id`, `project` |   | scoping |
 | `include_stale` |   | include invalidated/expired |
+| `include_raw` |   | include quarantined raw-tier observations |
 | `as_of` |   | ISO-8601, historical query |
 
-Returns `{results: [{id, title, type, tags, importance, score, snippet, created_at}]}`.
+Returns `{results: [{id, title, type, tags, importance, score, snippet, created_at, source_kind, trust_tier, derived_from}]}`.
 
 ### `mnemos_get`
 Fetch full observation by ID. Bumps access counter.
@@ -85,6 +90,19 @@ Token-budgeted search-and-pack.
 {"mode": "recovery", "session_id": "...", "project": "...", "goal": "..."}
 ```
 Restores current session goal, in-session observations, conventions. The "oh shit, context just got compacted" button.
+
+## Provenance
+
+### `mnemos_promote`
+Promote an observation between trust tiers after validation.
+
+| Param | Required | Notes |
+|---|---|---|
+| `id` | ✓ | observation ID |
+| `to_tier` | ✓ | `raw`, `curated`, or `skill` |
+| `why_better` | ✓ | one sentence naming the concrete signal that justifies promotion; min 16 chars |
+
+Typical path: `raw` to `curated` after tool-output content is verified, or `curated` to `skill` when a pattern is durable enough to reuse.
 
 ## Agent supercharge
 

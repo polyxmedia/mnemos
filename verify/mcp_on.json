@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mnemos": {
+      "type": "stdio",
+      "command": "/Users/andrefigueira/.local/bin/mnemos",
+      "args": ["serve"]
+    }
+  }
+}

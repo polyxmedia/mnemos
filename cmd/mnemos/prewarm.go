@@ -38,6 +38,9 @@ type hookInput struct {
 // unreachable, scanner error) we exit 0 with empty stdout. The hook must not
 // block or spam the user; degraded-silent is the right failure mode.
 func runPrewarm(ctx context.Context, args []string) error {
+	if os.Getenv("MNEMOS_DISABLED") != "" {
+		return nil
+	}
 	fs := flag.NewFlagSet("prewarm", flag.ContinueOnError)
 	var (
 		project     = fs.String("project", "", "project name (default: basename of cwd)")

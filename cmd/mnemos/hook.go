@@ -21,7 +21,15 @@ import (
 // at https://code.claude.com/docs/en/hooks) and performs one invisible,
 // best-effort side effect against the mnemos store. Failure is always silent
 // at exit 0 — hooks must never block the user or spam the transcript.
+//
+// Honors MNEMOS_DISABLED=1 as a global kill-switch: the verify harness sets
+// this in the off-arm so the user's globally-installed mnemos hooks (which
+// fire regardless of --strict-mcp-config) cannot contaminate the off
+// transcript with prewarm-injected memory or auto-search blocks.
 func runHook(ctx context.Context, args []string) error {
+	if os.Getenv("MNEMOS_DISABLED") != "" {
+		return nil
+	}
 	if len(args) == 0 {
 		return errors.New("usage: mnemos hook <user-prompt|stop|post-tool>")
 	}
@@ -49,11 +57,18 @@ func runHook(ctx context.Context, args []string) error {
 // shown in prewarm output and session lists, so we keep them one-line.
 const maxAutoGoalChars = 120
 
-// runHookUserPrompt handles Claude Code's UserPromptSubmit event. On every
-// user prompt it checks whether the current open session for this cwd has
-// a goal; if not, it backfills the first ~120 characters of the prompt so
-// the session stops being an anonymous timestamp. Idempotent — subsequent
-// prompts are no-ops because SetGoalIfEmpty guards on the goal column.
+// runHookUserPrompt handles Claude Code's UserPromptSubmit event. Two
+// invisible side effects:
+//  1. Backfill the open session's goal if empty (one-shot, idempotent).
+//  2. Search mnemos for relevant prior memory and inject the top hits to
+//     stdout so Claude Code adds them to the model's context — bypassing
+//     the agent's choice to (or not to) call mnemos_search itself. The
+//     correction `agent skipped mnemos_session_start on editing tasks`
+//     was saved precisely because LLMs skip optional tool calls; this
+//     promotes mnemos from optional to ambient.
+//
+// Both effects degrade silently. UserPromptSubmit stdout is injected into
+// the model context, so a failed search must produce zero stdout.
 func runHookUserPrompt(ctx context.Context, _ []string) error {
 	in := readHookStdin(os.Stdin)
 	if in.Prompt == "" {
@@ -62,29 +77,75 @@ func runHookUserPrompt(ctx context.Context, _ []string) error {
 
 	d, err := loadDeps(ctx)
 	if err != nil {
-		// Degraded silent: hooks must not fail loudly. Write nothing to
-		// stdout (Claude injects stdout into context for UserPromptSubmit).
 		fmt.Fprintln(os.Stderr, "mnemos hook user-prompt:", err)
 		return nil
 	}
 	defer d.close()
 
 	sess, err := d.sess.Current(ctx, "")
-	if err != nil {
-		if errors.Is(err, session.ErrNotFound) {
-			return nil
-		}
+	switch {
+	case err != nil && !errors.Is(err, session.ErrNotFound):
 		fmt.Fprintln(os.Stderr, "mnemos hook user-prompt:", err)
-		return nil
-	}
-	if sess == nil || sess.Goal != "" {
-		return nil
+	case sess != nil && sess.Goal == "":
+		if err := d.sess.SetGoalIfEmpty(ctx, sess.ID, truncateGoal(in.Prompt)); err != nil {
+			fmt.Fprintln(os.Stderr, "mnemos hook user-prompt:", err)
+		}
 	}
 
-	if err := d.sess.SetGoalIfEmpty(ctx, sess.ID, truncateGoal(in.Prompt)); err != nil {
-		fmt.Fprintln(os.Stderr, "mnemos hook user-prompt:", err)
-	}
+	emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt)
 	return nil
+}
+
+// promptMemoryMinScore is the BM25-after-ranker score under which we
+// suppress injection. Tuned empirically against the seed store: hits at
+// 1.5+ are clearly on-topic; below that we'd be force-feeding noise into
+// every prompt's context window.
+const promptMemoryMinScore = 1.5
+
+// promptMemoryMaxHits caps how many memories we inject per prompt. Three
+// is small enough to stay invisible on routine prompts but large enough to
+// catch the "convention + correction + decision" cluster around a topic.
+const promptMemoryMaxHits = 3
+
+// emitPromptMemoryBlock searches mnemos for the user's prompt and writes a
+// compact context block to w when at least one hit clears the score floor.
+// Best-effort: every error path produces zero stdout so a hook bug never
+// poisons the agent's context.
+func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt string) {
+	if prompt == "" || d == nil {
+		return
+	}
+	hits, err := d.mem.Search(ctx, memory.SearchInput{
+		Query: prompt,
+		Limit: promptMemoryMaxHits,
+	})
+	if err != nil || len(hits) == 0 {
+		return
+	}
+	kept := hits[:0]
+	for _, h := range hits {
+		if h.Score >= promptMemoryMinScore {
+			kept = append(kept, h)
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "[mnemos: prior memory relevant to this prompt — apply or address]")
+	for _, h := range kept {
+		title := h.Observation.Title
+		if title == "" {
+			title = h.Observation.ID
+		}
+		snippet := strings.TrimSpace(h.Snippet)
+		if snippet == "" {
+			snippet = strings.TrimSpace(h.Observation.Content)
+		}
+		if len(snippet) > 240 {
+			snippet = snippet[:237] + "…"
+		}
+		fmt.Fprintf(w, "- [%s] %s — %s\n", h.Observation.Type, title, snippet)
+	}
 }
 
 // truncateGoal folds whitespace and caps to maxAutoGoalChars, appending an

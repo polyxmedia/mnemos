@@ -11,7 +11,7 @@ There is a known correction already stored about this exact failure mode: _"agen
 
 ## Session lifecycle
 
-**Start.** The Claude Code SessionStart hook runs `mnemos prewarm`, which opens a mnemos session by default and injects a `mnemos_session_id:` line into context. If that ID is present, reuse it for `session_id` fields and do **not** call `mnemos_session_start` again. If no ID is present (manual MCP setup, non-Claude client, or hook disabled) and you are about to do real work, open one:
+**Start.** The agent SessionStart hook runs `mnemos prewarm`, which opens a mnemos session by default and injects a `mnemos_session_id:` line into context. If that ID is present, reuse it for `session_id` fields and do **not** call `mnemos_session_start` again. If no ID is present (manual MCP setup, non-hooked client, or hook disabled) and you are about to do real work, open one:
 
 ```
 mnemos_session_start(
@@ -20,7 +20,7 @@ mnemos_session_start(
 )
 ```
 
-Without a goal, the UserPromptSubmit hook backfills the first real prompt when available. With a goal, the session becomes a durable record that `mnemos replay` and future prewarms can use.
+Without a goal, the prompt hook backfills the first real prompt when available. With a goal, the session becomes a durable record that `mnemos replay` and future prewarms can use.
 
 **End.** When the user signals done ("ship it", "that's it", "commit and close", "we're done"), close the session:
 

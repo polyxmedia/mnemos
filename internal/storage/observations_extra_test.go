@@ -93,6 +93,95 @@ func TestListByProjectFilters(t *testing.T) {
 	}
 }
 
+func TestListByProjectOnlyReturnsLiveObservations(t *testing.T) {
+	db := openObsDB(t)
+	store := db.Observations()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	past := now.Add(-time.Millisecond)
+
+	live := seed(t, store, "live", "active content", memory.TypePattern)
+	expiredFact := &memory.Observation{
+		ID: ulid.Make().String(), AgentID: "default", Project: "proj",
+		Title: "expired fact", Content: "past valid_until", Type: memory.TypePattern,
+		Importance: 5, CreatedAt: now, ValidFrom: now, ValidUntil: &past,
+	}
+	expiredTTL := &memory.Observation{
+		ID: ulid.Make().String(), AgentID: "default", Project: "proj",
+		Title: "expired ttl", Content: "past expires_at", Type: memory.TypePattern,
+		Importance: 5, CreatedAt: now, ValidFrom: now, ExpiresAt: &past,
+	}
+	for _, o := range []*memory.Observation{expiredFact, expiredTTL} {
+		if err := store.Insert(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := store.ListByProject(ctx, "default", "proj", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != live.ID {
+		t.Fatalf("expected only live observation, got %+v", got)
+	}
+}
+
+func TestFindByContentHashIgnoresExpiredRows(t *testing.T) {
+	db := openObsDB(t)
+	store := db.Observations()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	past := now.Add(-time.Millisecond)
+	o := &memory.Observation{
+		ID: ulid.Make().String(), AgentID: "default", Project: "proj",
+		Title: "expired", Content: "same", Type: memory.TypePattern,
+		Importance: 5, CreatedAt: now, ValidFrom: now, ExpiresAt: &past,
+		ContentHash: "same-hash",
+	}
+	if err := store.Insert(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.FindByContentHash(ctx, "default", "proj", "same-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("expired observation should not dedup future saves, got %+v", got)
+	}
+}
+
+func TestListByTrustTierOnlyReturnsLiveObservations(t *testing.T) {
+	db := openObsDB(t)
+	store := db.Observations()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	past := now.Add(-time.Millisecond)
+
+	live := seed(t, store, "raw live", "active raw", memory.TypeContext)
+	live.TrustTier = memory.TrustRaw
+	if err := store.SetTrustTier(ctx, live.ID, memory.TrustRaw); err != nil {
+		t.Fatal(err)
+	}
+	expired := &memory.Observation{
+		ID: ulid.Make().String(), AgentID: "default", Project: "proj",
+		Title: "raw expired", Content: "expired raw", Type: memory.TypeContext,
+		Importance: 5, CreatedAt: now, ValidFrom: now, ExpiresAt: &past,
+		TrustTier: memory.TrustRaw,
+	}
+	if err := store.Insert(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.ListByTrustTier(ctx, "default", memory.TrustRaw, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != live.ID {
+		t.Fatalf("expected only live raw observation, got %+v", got)
+	}
+}
+
 func TestUpdateEmbedding(t *testing.T) {
 	db := openObsDB(t)
 	store := db.Observations()

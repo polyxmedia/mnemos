@@ -29,6 +29,16 @@ const obsColumns = `
 
 const selectObsSQL = `SELECT ` + obsColumns + ` FROM observations`
 
+func liveObsSQL(alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	return prefix + `invalidated_at IS NULL
+	   AND (` + prefix + `valid_until IS NULL OR ` + prefix + `valid_until > ?)
+	   AND (` + prefix + `expires_at  IS NULL OR ` + prefix + `expires_at  > ?)`
+}
+
 func (s *obsStore) Insert(ctx context.Context, o *memory.Observation) error {
 	tags, err := json.Marshal(coalesceSliceStr(o.Tags))
 	if err != nil {
@@ -269,17 +279,18 @@ func (s *obsStore) ListLinks(ctx context.Context, linkType memory.LinkType, agen
 	if limit <= 0 {
 		limit = 1000
 	}
+	now := time.Now().UTC()
 	query := `
-		SELECT l.source_id, src.title, src.agent_id, src.created_at, src.trust_tier,
-		       l.target_id, tgt.title, tgt.agent_id, tgt.created_at, tgt.trust_tier,
-		       l.created_at
-		  FROM observation_links l
-		  JOIN observations src ON src.id = l.source_id
-		  JOIN observations tgt ON tgt.id = l.target_id
-		 WHERE l.link_type = ?
-		   AND src.invalidated_at IS NULL
-		   AND tgt.invalidated_at IS NULL`
-	args := []any{string(linkType)}
+			SELECT l.source_id, src.title, src.agent_id, src.created_at, src.trust_tier,
+			       l.target_id, tgt.title, tgt.agent_id, tgt.created_at, tgt.trust_tier,
+			       l.created_at
+			  FROM observation_links l
+			  JOIN observations src ON src.id = l.source_id
+			  JOIN observations tgt ON tgt.id = l.target_id
+			 WHERE l.link_type = ?
+			   AND ` + liveObsSQL("src") + `
+			   AND ` + liveObsSQL("tgt")
+	args := []any{string(linkType), now, now, now, now}
 	if agentID != "" {
 		query += ` AND tgt.agent_id = ?`
 		args = append(args, agentID)
@@ -323,8 +334,9 @@ func (s *obsStore) ListByTrustTier(ctx context.Context, agentID string, tier mem
 	if limit <= 0 {
 		limit = 100
 	}
-	args := []any{string(tier)}
-	query := selectObsSQL + ` WHERE trust_tier = ? AND invalidated_at IS NULL`
+	now := time.Now().UTC()
+	args := []any{string(tier), now, now}
+	query := selectObsSQL + ` WHERE trust_tier = ? AND ` + liveObsSQL("")
 	if agentID != "" {
 		query += ` AND agent_id = ?`
 		args = append(args, agentID)
@@ -358,11 +370,8 @@ func (s *obsStore) Stats(ctx context.Context) (memory.Stats, error) {
 		return st, fmt.Errorf("count observations: %w", err)
 	}
 	now := time.Now().UTC()
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM observations
-		 WHERE invalidated_at IS NULL
-		   AND (valid_until IS NULL OR valid_until > ?)
-		   AND (expires_at  IS NULL OR expires_at  > ?)`, now, now).
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM observations WHERE `+liveObsSQL(""), now, now).
 		Scan(&st.LiveObservations); err != nil {
 		return st, fmt.Errorf("count live: %w", err)
 	}
@@ -425,7 +434,9 @@ func (s *obsStore) FindByContentHash(ctx context.Context, agentID, project, hash
 		query += ` AND project = ?`
 		args = append(args, project)
 	}
-	query += ` AND invalidated_at IS NULL LIMIT 1`
+	now := time.Now().UTC()
+	query += ` AND ` + liveObsSQL("") + ` LIMIT 1`
+	args = append(args, now, now)
 	row := s.db.QueryRowContext(ctx, query, args...)
 	o, err := scanObs(row)
 	if err != nil {
@@ -454,9 +465,9 @@ func (s *obsStore) ListByProject(ctx context.Context, agentID, project string, o
 	if limit <= 0 {
 		limit = 20
 	}
-	args := []any{}
-	query := selectObsSQL + ` WHERE invalidated_at IS NULL
-	                          AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)`
+	now := time.Now().UTC()
+	args := []any{now, now}
+	query := selectObsSQL + ` WHERE ` + liveObsSQL("")
 	if project != "" {
 		query += ` AND project = ?`
 		args = append(args, project)
@@ -498,9 +509,10 @@ func (s *obsStore) ListMissingEmbeddings(ctx context.Context, limit int) ([]memo
 	if limit <= 0 {
 		limit = 100
 	}
+	now := time.Now().UTC()
 	rows, err := s.db.QueryContext(ctx,
-		selectObsSQL+` WHERE embedding IS NULL AND invalidated_at IS NULL ORDER BY created_at DESC LIMIT ?`,
-		limit)
+		selectObsSQL+` WHERE embedding IS NULL AND `+liveObsSQL("")+` ORDER BY created_at DESC LIMIT ?`,
+		now, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list missing embeddings: %w", err)
 	}
