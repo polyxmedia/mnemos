@@ -107,7 +107,8 @@ Commands:
   doctor                 Check installation health
   verify retrieval       Probe the store with fixture queries (precision@K)
   verify behavior        A/B replay scenarios with mnemos on vs off (lift)
-  verify all             Run both
+  verify capture         Single-arm: do agents record corrections handed to them?
+  verify all             Run all three
   config                 Print the current configuration
   version                Print the binary version
 

@@ -3,7 +3,7 @@ PKG     := github.com/polyxmedia/mnemos
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(PKG)/internal/version.Version=$(VERSION)
 
-.PHONY: build test lint fmt install clean cover release release-local release-dry verify verify-retrieval verify-behavior
+.PHONY: build test lint fmt install clean cover release release-local release-dry verify verify-retrieval verify-behavior verify-capture
 
 build:
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/mnemos
@@ -39,6 +39,9 @@ verify-retrieval: build
 
 verify-behavior: build
 	bin/$(BINARY) verify behavior
+
+verify-capture: build
+	bin/$(BINARY) verify capture
 
 verify: build
 	bin/$(BINARY) verify all

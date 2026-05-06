@@ -10,11 +10,12 @@ import (
 
 // runVerify dispatches the verify subcommand tree:
 //   mnemos verify retrieval [fixture]   — cheap, runs against live store
-//   mnemos verify behavior  [fixture]   — expensive, runs claude subprocess
-//   mnemos verify all                   — both
+//   mnemos verify behavior  [fixture]   — expensive, claude A/B (read side)
+//   mnemos verify capture   [fixture]   — expensive, single-arm capture rate (write side)
+//   mnemos verify all                   — retrieval + behavior + capture
 func runVerify(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mnemos verify <retrieval|behavior|all> [fixture]")
+		return fmt.Errorf("usage: mnemos verify <retrieval|behavior|capture|all> [fixture]")
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -23,12 +24,18 @@ func runVerify(ctx context.Context, args []string) error {
 		return runVerifyRetrieval(ctx, rest)
 	case "behavior":
 		return runVerifyBehavior(ctx, rest)
+	case "capture":
+		return runVerifyCapture(ctx, rest)
 	case "all":
 		if err := runVerifyRetrieval(ctx, rest); err != nil {
 			return err
 		}
 		fmt.Println()
-		return runVerifyBehavior(ctx, rest)
+		if err := runVerifyBehavior(ctx, rest); err != nil {
+			return err
+		}
+		fmt.Println()
+		return runVerifyCapture(ctx, rest)
 	default:
 		return fmt.Errorf("unknown verify subcommand: %s", sub)
 	}
@@ -77,6 +84,23 @@ func runVerifyBehavior(ctx context.Context, args []string) error {
 	return nil
 }
 
+func runVerifyCapture(ctx context.Context, args []string) error {
+	path := "verify/capture.yaml"
+	if len(args) > 0 {
+		path = args[0]
+	}
+	fix, err := verify.LoadCaptureFixture(path)
+	if err != nil {
+		return err
+	}
+	rep, err := verify.RunCapture(ctx, verify.ExecExecutor{}, fix)
+	if err != nil {
+		return fmt.Errorf("capture: %w", err)
+	}
+	printCaptureReport(os.Stdout, rep)
+	return nil
+}
+
 // printRetrievalReport renders one row per probe plus a summary line.
 // Failed probes show every query rank so it's obvious whether the target
 // was missing entirely (rank 0) or just buried below the threshold.
@@ -106,6 +130,31 @@ func printRetrievalReport(w *os.File, rep *verify.RetrievalReport) {
 	}
 	fmt.Fprintf(w, "\n  %d/%d probes passed (precision@K)\n",
 		rep.Passed, rep.Total)
+}
+
+// printCaptureReport shows per-scenario capture rate plus aggregate.
+// Single-arm so there's no "lift" — just whether the agent recorded what
+// the user said when they said it.
+func printCaptureReport(w *os.File, rep *verify.CaptureReport) {
+	fmt.Fprintln(w, "capture report")
+	fmt.Fprintln(w, "==============")
+	fmt.Fprintf(w, "  %-32s  %-10s  %s\n", "scenario", "captured", "rate")
+	totalCap, totalRuns := 0, 0
+	for _, s := range rep.Scenarios {
+		fmt.Fprintf(w, "  %-32s  %d/%-8d  %3.0f%%\n",
+			truncate(s.Scenario.Name, 32),
+			s.Captured, s.Runs, s.Rate()*100)
+		if len(s.Errors) > 0 {
+			fmt.Fprintf(w, "      %d run errors\n", len(s.Errors))
+		}
+		totalCap += s.Captured
+		totalRuns += s.Runs
+	}
+	rate := 0.0
+	if totalRuns > 0 {
+		rate = float64(totalCap) / float64(totalRuns)
+	}
+	fmt.Fprintf(w, "\n  overall capture rate: %d/%d (%.0f%%)\n", totalCap, totalRuns, rate*100)
 }
 
 // printBehaviorReport shows on/off pass counts and lift per scenario.

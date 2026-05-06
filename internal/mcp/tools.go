@@ -22,11 +22,13 @@ func (s *Server) registerTools() {
 	// Save / search / get / delete / link --------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_save",
-		Description: "Call AFTER any non-obvious decision, architectural choice, or surprise in this " +
-			"project — the kind of thing the next session would benefit from knowing. Persist an " +
-			"agent-curated observation (decision, bugfix, pattern, preference, context, architecture, " +
-			"episodic, semantic, procedural, correction, convention). Deliberately curated: save things " +
-			"worth remembering later, not routine task progress.",
+		Description: "Call IMMEDIATELY when the user says \"save this\", \"remember\", \"note this\", " +
+			"\"record\", \"keep this for next time\", \"for future sessions\", or shares an architectural " +
+			"decision worth carrying forward (\"we just decided to use X over Y\", \"going with X\"). " +
+			"Also call after any non-obvious decision or surprise the next session would benefit from " +
+			"knowing. For corrections specifically use mnemos_correct (sharper schema); for project " +
+			"rules use mnemos_convention. Deliberately curated: save things worth remembering later, " +
+			"not routine task progress. Better to over-save a real signal than skip it.",
 	}, s.handleSave)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
@@ -90,18 +92,24 @@ func (s *Server) registerTools() {
 	// Agent supercharge --------------------------------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_correct",
-		Description: "Call THE MOMENT the user corrects you (\"no\", \"don't\", \"that's wrong\", " +
-			"\"actually\") or you discover a tried-approach failed. Record: tried + wrong_because + fix + " +
-			"trigger_context. Auto-surfaced in session pre-warm when the session goal matches. " +
-			"This is the anti-repeat-mistakes loop — every skipped call is a future repeat.",
+		Description: "Call IMMEDIATELY when the user signals a correction or shares a past failure. " +
+			"Trigger phrases include: \"no\", \"don't\", \"that's wrong\", \"actually\", \"we tried X\", " +
+			"\"we were wrong about\", \"going forward use\", \"don't do X — it caused Y\", \"X failed " +
+			"because Y\", \"last time we did X and it broke\". Even mid-task corrections count — " +
+			"capture before continuing the work. Record: tried + wrong_because + fix + trigger_context. " +
+			"Auto-surfaced in session pre-warm when the session goal matches. This is the " +
+			"anti-repeat-mistakes loop; every skipped call is a future repeat.",
 	}, s.handleCorrect)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_convention",
-		Description: "Call when the user states a project rule (\"we always\", \"never\", \"the " +
-			"convention here is\") or you derive one from repeated patterns. Declares a project " +
-			"convention; auto-injected at every session_start for the matching project. " +
-			"Declared once, applied forever.",
+		Description: "Call IMMEDIATELY when the user declares a project rule or you derive one from " +
+			"repeated patterns. Trigger phrases: \"we always\", \"we never\", \"the convention here " +
+			"is\", \"in this codebase we\", \"every X uses Y\", \"the rule is\", \"by convention\", " +
+			"\"don't ever\". Even a quick aside (\"btw we always do X\") counts — capture it before " +
+			"answering the rest of the prompt. Declares a project convention; auto-injected at every " +
+			"session_start for the matching project. Declared once, applied forever — and the next " +
+			"agent on this project starts knowing it.",
 	}, s.handleConvention)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{

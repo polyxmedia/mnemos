@@ -1,0 +1,53 @@
+# Capture rate (write-side): does the agent record corrections, conventions,
+# and decisions the user hands it during work? Single arm — the off-arm has
+# no save/correct/convention tools, so the comparison is uninformative; the
+# meaningful number is the on-arm rate.
+#
+# Mix scenarios across explicitness levels. An explicit "save this" should
+# pass nearly always (control). A quiet "btw we always X" embedded in other
+# work is the realistic stress test, where the agent is most tempted to skip.
+
+arm:
+  cmd:
+    - /Users/andrefigueira/Code/mnemos/verify/runners/on.sh
+    - "{{trigger}}"
+
+scenarios:
+  - name: explicit_save_request
+    trigger: "Save this for future sessions: in this codebase, all error wrapping uses fmt.Errorf with %w (never %s). It preserves the chain for errors.Is."
+    runs: 3
+    # mnemos_search counts as a pass: if the rule already exists in the
+    # store, the responsible behavior is to look first and skip the save.
+    # We're testing engagement with mnemos, not blind writes.
+    expect_tools:
+      - mcp__mnemos__mnemos_save
+      - mcp__mnemos__mnemos_convention
+      - mcp__mnemos__mnemos_search
+
+  - name: inline_correction
+    trigger: "Actually wait, hold on — we tried caching auth tokens for 5 minutes last quarter and it caused the bug where revoked sessions stayed valid. Going forward use 30 seconds max. Now help me draft a docstring for the cache."
+    runs: 3
+    expect_tools:
+      - mcp__mnemos__mnemos_correct
+      - mcp__mnemos__mnemos_save
+
+  - name: quiet_convention_mention
+    trigger: "I want to add a small validation helper to internal/api/. Quick note before you start: we always declare interfaces at the consumer side here, not at the producer. Now write the helper."
+    runs: 3
+    expect_tools:
+      - mcp__mnemos__mnemos_convention
+      - mcp__mnemos__mnemos_save
+
+  - name: architectural_decision
+    trigger: "We just decided to use modernc.org/sqlite instead of mattn/go-sqlite3 for the embedded store — the no-CGO requirement is hard. Note that down then walk me through the import statement."
+    runs: 3
+    expect_tools:
+      - mcp__mnemos__mnemos_save
+      - mcp__mnemos__mnemos_convention
+
+  - name: silent_correction_mid_work
+    trigger: "Add a function to read the user's home directory in pkg/user. (Side note: don't use os.UserHomeDir directly — it reads different env vars per GOOS and bites us on Windows tests. Use our internal helper userhome.Resolve.) Show the function."
+    runs: 3
+    expect_tools:
+      - mcp__mnemos__mnemos_correct
+      - mcp__mnemos__mnemos_save

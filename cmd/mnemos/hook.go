@@ -93,7 +93,105 @@ func runHookUserPrompt(ctx context.Context, _ []string) error {
 	}
 
 	emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt)
+	emitCaptureDirective(os.Stdout, in.Prompt)
 	return nil
+}
+
+// captureSignal names what kind of write tool the user's phrasing is
+// asking for. Returned by detectCaptureShape; consumed by
+// emitCaptureDirective.
+type captureSignal int
+
+const (
+	captureNone captureSignal = iota
+	captureCorrection
+	captureConvention
+	captureSave
+)
+
+// detectCaptureShape pattern-matches the user's prompt for phrasing that
+// should fire a write tool. Description-level hints (in the MCP tool
+// docs) ceiling out around 13% capture in claude -p — the agent stays
+// task-focused and skips optional tool calls. This adds a directive
+// block to the prompt context that's much harder to skip.
+//
+// Patterns are intentionally conservative — we want low false-positive
+// rate, not maximal recall. Better to miss a borderline correction than
+// nag the agent on every routine prompt.
+func detectCaptureShape(prompt string) captureSignal {
+	p := strings.ToLower(prompt)
+
+	// Convention: explicit project rules. Highest precedence — "we always
+	// do X" is a rule, not a one-off correction.
+	conventionPatterns := []string{
+		"we always", "we never",
+		"in this codebase we", "in this repo we", "in this project we",
+		"the convention here is", "the convention is",
+		"by convention", "the rule is", "the rule here is",
+		"every error", "every commit", "every migration",
+	}
+	for _, pat := range conventionPatterns {
+		if strings.Contains(p, pat) {
+			return captureConvention
+		}
+	}
+
+	// Correction: tried/wrong/fix shape, including past-failure references.
+	correctionPatterns := []string{
+		"we tried", "we were wrong",
+		"going forward", "from now on",
+		"don't do", "do not do", "don't use", "do not use",
+		"that's wrong", "that is wrong",
+		"actually wait", "hold on",
+		"caused the bug", "caused a bug",
+		"last time we", "last quarter we", "last week we",
+		"don't ever", "never do",
+	}
+	for _, pat := range correctionPatterns {
+		if strings.Contains(p, pat) {
+			return captureCorrection
+		}
+	}
+
+	// Save: explicit memory request or architectural-decision narration.
+	savePatterns := []string{
+		"save this", "remember this", "remember that",
+		"note this", "note that", "for future sessions",
+		"keep this for next", "we just decided",
+		"we're going with", "we are going with", "going with",
+	}
+	for _, pat := range savePatterns {
+		if strings.Contains(p, pat) {
+			return captureSave
+		}
+	}
+
+	return captureNone
+}
+
+// emitCaptureDirective writes a strong-language block to w when the
+// user's prompt looks like a correction, convention, or save request.
+// The block sits in the agent's system prompt context (UserPromptSubmit
+// stdout is concatenated in by Claude Code) and tells the agent which
+// tool to call before doing anything else.
+//
+// We do NOT call the tool ourselves — the agent owns the structured
+// arguments (tried/wrong_because/fix), and we want the agent to learn
+// the pattern, not be replaced by it. The directive raises capture from
+// "optional" to "non-optional in this turn."
+func emitCaptureDirective(w io.Writer, prompt string) {
+	signal := detectCaptureShape(prompt)
+	if signal == captureNone {
+		return
+	}
+	switch signal {
+	case captureCorrection:
+		fmt.Fprintln(w, "[mnemos: capture required] The user's prompt contains correction-shaped phrasing (\"we tried X\", \"going forward\", \"don't do Y\", or similar). BEFORE answering the rest of the prompt, call mnemos_correct with: tried = the failed approach, wrong_because = why it failed, fix = what to do instead, trigger_context = a phrase that should resurface this in future. Do this even if it interrupts the task — the next session will repeat the mistake otherwise.")
+	case captureConvention:
+		fmt.Fprintln(w, "[mnemos: capture required] The user's prompt declares a project convention (\"we always X\", \"the rule here is Y\", or similar). BEFORE answering the rest of the prompt, call mnemos_convention with title = short label, rule = the rule itself, rationale = why. The next agent on this project should not have to be told this twice.")
+	case captureSave:
+		fmt.Fprintln(w, "[mnemos: capture required] The user explicitly asked you to remember or save something, OR narrated an architectural decision (\"we just decided X\", \"going with Y\"). BEFORE answering the rest of the prompt, search mnemos first; if not already recorded, call mnemos_save with type = decision (or convention if it's a project rule), title = short label, content = the substance.")
+	}
 }
 
 // promptMemoryMinScore is the BM25-after-ranker score under which we

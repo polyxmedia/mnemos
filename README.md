@@ -232,12 +232,15 @@ Memory systems are easy to claim and hard to verify. Mnemos ships a self-test ha
 ```bash
 mnemos verify retrieval   # cheap: do memories surface for their trigger queries?
 mnemos verify behavior    # expensive: does the agent behave differently on/off?
-mnemos verify all         # both
+mnemos verify capture     # expensive: does the agent record corrections handed to it?
+mnemos verify all         # all three
 ```
 
 **Retrieval probe.** For each high-importance memory in the store, the fixture lists trigger queries and an expected top-K. The harness runs `mnemos_search` and asserts the memory ID is in the top hits. Cheap, no API tokens, runs every commit.
 
 **Behavior A/B.** For each scenario, the harness runs the trigger prompt N times under two arms: on (full mnemos surface, hooks enabled, MCP tools available) and off (`MNEMOS_DISABLED=1` to no-op every globally-installed mnemos hook, `--strict-mcp-config` plus an empty MCP config to kill the tool surface). Auth and other settings stay intact. Off-arm transcripts are spot-checked for mnemos artefacts as a contamination canary.
+
+**Capture rate (write side).** Single arm. Each scenario embeds a user correction or convention in a working prompt ("we tried X — going forward use Y. Now help me with Z"). The harness counts how often the agent fires `mnemos_correct`/`mnemos_save`/`mnemos_convention`. This is the write-side question retrieval-and-behavior tests don't answer: a memory that never got captured can't help, no matter how good your retrieval is. Initial baseline was 7%. After two rounds of lever tuning (trigger-phrase examples in MCP tool descriptions, then a UserPromptSubmit hook that detects correction-shaped phrasing and emits a "[mnemos: capture required]" directive into context), the rate moved to 53%.
 
 **Numbers from a 5-scenario, n=5, paired run against the dev store:**
 
@@ -254,7 +257,22 @@ overall                         25/25 15/25 +40%
 
 Read this honestly. Mnemos wins decisively where the convention is contrarian or project-specific (`oss_first_for_protocol`: the off-arm hand-rolls a JSON-RPC server every time; the on-arm reaches for the official SDK every time). It also wins on the recursive case (`session_start_on_edit`: the off-arm never calls a single mnemos tool when starting work; the on-arm reliably orients itself by calling `mnemos_session_start` or `mnemos_search`). On widely-known best practices (no AI attribution, pure-Go SQLite, no editing shipped migrations) Claude already gets it right from training, so mnemos adds no measurable lift, and importantly does no harm.
 
-Bottom line: memory pays where the model's prior is wrong or absent; nowhere else. The harness exists so future changes are evaluated against a real number, not a feeling. Fixtures and runner scripts are at [`verify/`](verify/).
+**Capture numbers from a 5-scenario, n=3 run, after both lever rounds:**
+
+```
+scenario                        captured  rate
+explicit_save_request           3/3       100%
+inline_correction               2/3        67%
+quiet_convention_mention        2/3        67%
+architectural_decision          0/3         0%
+silent_correction_mid_work      1/3        33%
+                                ────────  ─────
+overall                         8/15       53%
+```
+
+The remaining gap is real. Architectural decisions buried inside larger tasks ("we just decided X, now show me Y") still get skipped, and parenthetical corrections are spotty. n=3 is noisy; the directive-block lever is conservative on purpose to avoid nagging on routine prompts. Both numbers track in CI so the next change either earns its keep or doesn't.
+
+Bottom line: on the read side, memory pays where the model's prior is wrong or absent. On the write side, capture is a structural problem rather than a documentation one — getting from 7% to 53% needed a hook-level directive, not just better tool descriptions. The harness exists so future changes are evaluated against a real number, not a feeling. Fixtures and runner scripts are at [`verify/`](verify/).
 
 ## How it compares
 
