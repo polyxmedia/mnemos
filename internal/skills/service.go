@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Service is the agent-facing API for procedural memory. It validates input
@@ -56,6 +57,64 @@ func (s *Service) Get(ctx context.Context, id string) (*Skill, error) {
 // List returns all skills for an agent (or all agents if empty).
 func (s *Service) List(ctx context.Context, agentID string) ([]Skill, error) {
 	return s.store.List(ctx, agentID)
+}
+
+// confidenceFloor is the use_count at which a skill's measured
+// effectiveness is considered fully trustworthy. Below this, we shrink
+// toward the 0.5 prior so a 1/1 record doesn't outrank a 9/10 one.
+const confidenceFloor = 10
+
+// stalenessHorizonDays sets the linear decay window for the recency
+// factor. A skill last used today scores 1.0; one untouched for this
+// many days scores 0.0. Tuned to roughly match the dream pass's
+// stale_skill_days default.
+const stalenessHorizonDays = 90
+
+// Score returns a structured quality report for one skill, combining
+// raw effectiveness, use count, recency, and provenance into one
+// composite number plus the inputs that built it. The intent: clients
+// (dashboards, "skills ranked by lift" registries, the MCP tool surface)
+// pick whichever weighting they want without recomputing from scratch.
+func (s *Service) Score(ctx context.Context, id string) (*ScoreReport, error) {
+	if id == "" {
+		return nil, fmt.Errorf("skill score: id required")
+	}
+	sk, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	rep := &ScoreReport{
+		SkillID:       sk.ID,
+		Effectiveness: sk.Effectiveness,
+		UseCount:      sk.UseCount,
+		SuccessCount:  sk.SuccessCount,
+		UpdatedAt:     sk.UpdatedAt,
+	}
+
+	// Bayesian shrinkage: a 1/1 skill at 1.0 effectiveness is much less
+	// trustworthy than a 9/10 skill at 0.9. Pulling the low-volume
+	// estimate toward the 0.5 prior corrects the small-sample
+	// over-confidence; at confidenceFloor uses, the raw rate stands.
+	confidence := float64(sk.UseCount) / float64(confidenceFloor)
+	if confidence > 1.0 {
+		confidence = 1.0
+	}
+	rep.AdjustedEffectiveness = sk.Effectiveness*confidence + 0.5*(1-confidence)
+
+	// Linear decay from last update. now() reads from the same monotonic
+	// source the store uses, so a skill written this turn scores 1.0.
+	since := time.Since(sk.UpdatedAt).Hours() / 24
+	rep.Recency = 1.0 - since/float64(stalenessHorizonDays)
+	if rep.Recency < 0 {
+		rep.Recency = 0
+	}
+	if sk.UpdatedAt.IsZero() {
+		rep.Recency = 0
+	}
+
+	rep.Score = rep.AdjustedEffectiveness * rep.Recency
+	return rep, nil
 }
 
 // RecordUse updates usage and effectiveness based on agent feedback. This is

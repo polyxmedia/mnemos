@@ -62,6 +62,29 @@ type FeedbackInput struct {
 	Success bool
 }
 
+// ScoreReport bundles the components of a skill's measured quality. The
+// composite Score is a single 0-1 number callers can rank by; the
+// individual fields are exposed so callers building dashboards or
+// "skills ranked by lift" registries can choose their own weighting.
+//
+// AdjustedEffectiveness applies Bayesian shrinkage toward the 0.5 prior
+// when UseCount is small — a skill that succeeded once out of one
+// invocation should not outrank one that succeeded 9 times out of 10.
+//
+// Recency is a [0,1] factor that decays linearly from 1 at the moment
+// of last use to 0 after stalenessHorizon days. Forgotten skills lose
+// score even if their effectiveness was high in their day.
+type ScoreReport struct {
+	SkillID               string
+	Effectiveness         float64 // raw success_count / use_count, 0 if unused
+	UseCount              int
+	SuccessCount          int
+	AdjustedEffectiveness float64 // Bayesian-shrunk against 0.5 prior
+	Recency               float64 // 1.0 = used today, 0.0 = stale
+	Score                 float64 // composite 0-1, the headline number
+	UpdatedAt             time.Time
+}
+
 // Store persists skills.
 type Store interface {
 	Upsert(ctx context.Context, in SaveInput) (*Skill, error)

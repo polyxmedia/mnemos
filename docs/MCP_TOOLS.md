@@ -136,6 +136,15 @@ Find skills matching a query. Effectiveness (success/use ratio) nudges ranking s
 ### `mnemos_skill_save`
 Save or version a reusable procedure. Keyed by `(agent_id, name)` — same name bumps `version`.
 
+### `mnemos_skill_score`
+Return a structured quality report for one skill: raw `effectiveness` (success/use ratio), `use_count`, `success_count`, Bayesian-shrunk `adjusted_effectiveness` (so a 1/1 record does not outrank 9/10), a `recency` factor that decays linearly to zero over 90 days, and a composite 0-1 `score`. Use this when ranking, selecting, or reporting skill quality from measurements rather than guesses.
+
+| Parameter | Notes |
+| --- | --- |
+| `id` | required — the skill ID returned by `mnemos_skill_save` or `mnemos_skill_match` |
+
+The composite `score` is `adjusted_effectiveness * recency`, intentionally simple so callers can recompute their own weighting from the components. Forms the basis of "skills ranked by measured lift" registries.
+
 ## Rumination
 
 Four tools, exposed only when `[rumination].enabled = true` in config (the default). The pattern:

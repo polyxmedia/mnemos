@@ -130,6 +130,14 @@ func (s *Server) registerTools() {
 			"the version.",
 	}, s.handleSkillSave)
 
+	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+		Name: "mnemos_skill_score",
+		Description: "Return a structured quality report for one skill: raw effectiveness, use_count, " +
+			"success_count, Bayesian-shrunk effectiveness (so a 1/1 record doesn't outrank 9/10), a " +
+			"recency factor decaying over 90 days, and a composite 0-1 score. Use this when ranking, " +
+			"selecting, or reporting on skills measured rather than guessed quality.",
+	}, s.handleSkillScore)
+
 	// Rumination ---------------------------------------------------------
 	// Guarded: only expose the ruminate_* surface when a rumination
 	// service is wired. Makes rumination.enabled = false (in config) a
@@ -594,6 +602,27 @@ func (s *Server) handleSkillSave(ctx context.Context, _ *mcpsdk.CallToolRequest,
 		return nil, nil, err
 	}
 	return jsonResult(map[string]any{"id": sk.ID, "name": sk.Name, "version": sk.Version})
+}
+
+type skillScoreArgs struct {
+	ID string `json:"id" jsonschema:"the skill ID returned by skill_save or skill_match"`
+}
+
+func (s *Server) handleSkillScore(ctx context.Context, _ *mcpsdk.CallToolRequest, a skillScoreArgs) (*mcpsdk.CallToolResult, any, error) {
+	rep, err := s.cfg.Skills.Score(ctx, a.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{
+		"skill_id":               rep.SkillID,
+		"effectiveness":          rep.Effectiveness,
+		"use_count":              rep.UseCount,
+		"success_count":          rep.SuccessCount,
+		"adjusted_effectiveness": rep.AdjustedEffectiveness,
+		"recency":                rep.Recency,
+		"score":                  rep.Score,
+		"updated_at":             rep.UpdatedAt,
+	})
 }
 
 // ---- stats -------------------------------------------------------------

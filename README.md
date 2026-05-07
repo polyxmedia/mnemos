@@ -213,7 +213,7 @@ args    = ["serve"]
 
 ### Zed / Continue / any MCP-compatible client
 
-Anything that speaks MCP over stdio can talk to Mnemos. Point the client's tool config at the `mnemos serve` binary. The server advertises 15 baseline tools + 3 resources on the `initialize` handshake, or 19 tools when rumination is enabled.
+Anything that speaks MCP over stdio can talk to Mnemos. Point the client's tool config at the `mnemos serve` binary. The server advertises 16 baseline tools + 3 resources on the `initialize` handshake, or 20 tools when rumination is enabled.
 
 ### Remote / team setup (HTTP)
 
@@ -331,9 +331,9 @@ Mnemos is new (v0.1.x, early adoption). Table based on public documentation as o
 | `mnemos config` | Print current config |
 | `mnemos version` | Print version |
 
-## MCP tools (15 baseline, 19 with rumination)
+## MCP tools (16 baseline, 20 with rumination)
 
-`mnemos_save` · `mnemos_search` · `mnemos_get` · `mnemos_delete` · `mnemos_link` · `mnemos_session_start` · `mnemos_session_end` · `mnemos_context` · `mnemos_promote` · `mnemos_correct` · `mnemos_convention` · `mnemos_touch` · `mnemos_skill_match` · `mnemos_skill_save` · `mnemos_stats` · `mnemos_ruminate_list` · `mnemos_ruminate_pack` · `mnemos_ruminate_resolve` · `mnemos_ruminate_dismiss`
+`mnemos_save` · `mnemos_search` · `mnemos_get` · `mnemos_delete` · `mnemos_link` · `mnemos_session_start` · `mnemos_session_end` · `mnemos_context` · `mnemos_promote` · `mnemos_correct` · `mnemos_convention` · `mnemos_touch` · `mnemos_skill_match` · `mnemos_skill_save` · `mnemos_skill_score` · `mnemos_stats` · `mnemos_ruminate_list` · `mnemos_ruminate_pack` · `mnemos_ruminate_resolve` · `mnemos_ruminate_dismiss`
 
 See [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) for parameter details. The four `mnemos_ruminate_*` tools are exposed only when `[rumination].enabled = true` in config (the default).
 

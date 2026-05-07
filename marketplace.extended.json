@@ -1,7 +1,7 @@
 {
   "name": "mnemos",
-  "version": "0.5.0",
-  "description": "Persistent memory and learning-loop skills for AI coding agents. MCP-native with 19 tools, single Go binary, ships with measured efficacy harness.",
+  "version": "0.5.1",
+  "description": "Persistent memory and learning-loop skills for AI coding agents. MCP-native with 20 tools, single Go binary, ships with measured efficacy harness.",
   "author": {
     "name": "André Figueira",
     "email": "andre@polyxmedia.com",
@@ -15,7 +15,7 @@
   "featured": false,
   "features": [
     "Persistent cross-session memory with bi-temporal store (valid + system time)",
-    "MCP-native: 19 tools (save/search/correct/convention/promote/skills/rumination)",
+    "MCP-native: 20 tools (save/search/correct/convention/promote/skills/rumination/skill_score)",
     "Deterministic correction → skill promotion (no LLM in the loop, fully reproducible)",
     "Prompt-injection scanner at the memory-write boundary",
     "Hybrid BM25 + vector retrieval via Reciprocal Rank Fusion, auto-detects Ollama",
