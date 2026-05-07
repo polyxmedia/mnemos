@@ -1,0 +1,43 @@
+{
+  "name": "mnemos",
+  "version": "0.5.0",
+  "description": "Persistent memory and learning-loop skills for AI coding agents. MCP-native with 19 tools, single Go binary, ships with measured efficacy harness.",
+  "author": {
+    "name": "André Figueira",
+    "email": "andre@polyxmedia.com",
+    "url": "https://polyxmedia.com"
+  },
+  "repository": "https://github.com/polyxmedia/mnemos",
+  "homepage": "https://github.com/polyxmedia/mnemos",
+  "license": "MIT",
+  "category": "ai-ml-assistance",
+  "installation": "curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/install.sh | bash && mnemos init",
+  "featured": false,
+  "features": [
+    "Persistent cross-session memory with bi-temporal store (valid + system time)",
+    "MCP-native: 19 tools (save/search/correct/convention/promote/skills/rumination)",
+    "Deterministic correction → skill promotion (no LLM in the loop, fully reproducible)",
+    "Prompt-injection scanner at the memory-write boundary",
+    "Hybrid BM25 + vector retrieval via Reciprocal Rank Fusion, auto-detects Ollama",
+    "Single static Go binary, no Python, no Docker, no CGO, ~15 MB",
+    "3-mode efficacy harness shipping numbers: behaviour A/B + write capture rate"
+  ],
+  "requirements": [
+    "Claude Code or any MCP-compatible client (Cursor, Windsurf, Codex CLI)",
+    "macOS, Linux, or Windows (amd64 or arm64)"
+  ],
+  "keywords": [
+    "memory",
+    "mcp",
+    "claude-code",
+    "persistent-memory",
+    "agent-memory",
+    "knowledge-graph",
+    "context",
+    "skill",
+    "observations",
+    "provenance",
+    "learning-loop",
+    "golang"
+  ]
+}

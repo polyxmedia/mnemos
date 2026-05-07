@@ -1,0 +1,40 @@
+{
+  "name": "mnemos",
+  "owner": {
+    "name": "André Figueira",
+    "url": "https://polyxmedia.com"
+  },
+  "description": "Persistent memory and learning-loop skills for AI coding agents.",
+  "plugins": [
+    {
+      "name": "mnemos",
+      "source": "./",
+      "description": "The mnemos server provides a persistent memory system for AI coding agents that compounds corrections into skills via deterministic promotion. Single Go binary, MCP-native, runs locally.",
+      "version": "0.5.0",
+      "author": {
+        "name": "André Figueira",
+        "email": "andre@polyxmedia.com",
+        "url": "https://polyxmedia.com"
+      },
+      "homepage": "https://github.com/polyxmedia/mnemos",
+      "repository": "https://github.com/polyxmedia/mnemos",
+      "license": "MIT",
+      "category": "ai-ml-tools",
+      "keywords": [
+        "memory",
+        "mcp",
+        "claude-code",
+        "persistent-memory",
+        "agent-memory",
+        "context",
+        "learning-loop"
+      ],
+      "mcpServers": {
+        "mnemos": {
+          "command": "mnemos",
+          "args": ["serve"]
+        }
+      }
+    }
+  ]
+}
