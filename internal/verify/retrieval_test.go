@@ -29,8 +29,8 @@ func TestRunRetrievalPassesWhenTargetInTopK(t *testing.T) {
 		ExpectInTop: 5,
 	}}}
 	s := fakeSearcher{byQuery: map[string][]string{
-		"q1": {"X", "Y", "MEM1", "Z"},     // rank 3
-		"q2": {"A", "B", "C", "D", "E"},   // miss
+		"q1": {"X", "Y", "MEM1", "Z"},   // rank 3
+		"q2": {"A", "B", "C", "D", "E"}, // miss
 	}}
 	rep, err := RunRetrieval(context.Background(), s, fix)
 	if err != nil {

@@ -10,8 +10,8 @@ import (
 // arm by design — the off-arm has no save/correct/convention tools so the
 // comparison is uninformative; the metric that matters is the on-arm rate.
 type CaptureFixture struct {
-	Arm       ArmCmd             `yaml:"arm"`
-	Scenarios []CaptureScenario  `yaml:"scenarios"`
+	Arm       ArmCmd            `yaml:"arm"`
+	Scenarios []CaptureScenario `yaml:"scenarios"`
 }
 
 // CaptureScenario embeds a user correction (or convention, or decision) in

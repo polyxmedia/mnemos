@@ -16,9 +16,9 @@ type Searcher interface {
 
 // RetrievalReport summarises a retrieval probe run.
 type RetrievalReport struct {
-	Probes  []ProbeOutcome
-	Total   int
-	Passed  int
+	Probes []ProbeOutcome
+	Total  int
+	Passed int
 }
 
 // ProbeOutcome is the per-probe result. BestRank is the smallest rank

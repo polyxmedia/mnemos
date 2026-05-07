@@ -49,11 +49,11 @@ type ArmCmd struct {
 // transcripts matching PassWhen at a higher rate than the off-arm. Runs
 // controls the sample size per arm.
 type BehaviorScenario struct {
-	Name     string         `yaml:"name"`
-	MemoryID string         `yaml:"memory_id"`
-	Trigger  string         `yaml:"trigger"`
-	PassWhen Assertions     `yaml:"pass_when"`
-	Runs     int            `yaml:"runs"`
+	Name     string     `yaml:"name"`
+	MemoryID string     `yaml:"memory_id"`
+	Trigger  string     `yaml:"trigger"`
+	PassWhen Assertions `yaml:"pass_when"`
+	Runs     int        `yaml:"runs"`
 }
 
 // Assertions holds substring-level checks against a transcript. ContainsAny

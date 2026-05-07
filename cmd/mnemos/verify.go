@@ -9,10 +9,11 @@ import (
 )
 
 // runVerify dispatches the verify subcommand tree:
-//   mnemos verify retrieval [fixture]   — cheap, runs against live store
-//   mnemos verify behavior  [fixture]   — expensive, claude A/B (read side)
-//   mnemos verify capture   [fixture]   — expensive, single-arm capture rate (write side)
-//   mnemos verify all                   — retrieval + behavior + capture
+//
+//	mnemos verify retrieval [fixture]   — cheap, runs against live store
+//	mnemos verify behavior  [fixture]   — expensive, claude A/B (read side)
+//	mnemos verify capture   [fixture]   — expensive, single-arm capture rate (write side)
+//	mnemos verify all                   — retrieval + behavior + capture
 func runVerify(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: mnemos verify <retrieval|behavior|capture|all> [fixture]")
@@ -178,4 +179,3 @@ func truncate(s string, n int) string {
 	}
 	return s[:n-1] + "…"
 }
-
