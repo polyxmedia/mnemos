@@ -3,13 +3,28 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
+
+// hookPayload marshals an arbitrary hook payload to JSON. Tests previously
+// hand-built JSON strings with `+ cwd +` interpolation, which broke on
+// Windows where path components contain backslashes (`\a`, `\x` are not
+// valid JSON escape sequences) and corrupted the entire payload.
+func hookPayload(t *testing.T, fields map[string]any) string {
+	t.Helper()
+	b, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return string(b)
+}
 
 // withStdin pipes s into os.Stdin for the duration of fn and restores the
 // original on return. Matches the captureStdout helper pattern so hook
@@ -152,9 +167,18 @@ func TestHookPostToolRecordsTouchForEdit(t *testing.T) {
 	}
 	d.close()
 
-	cwd := os.Getenv("HOME") + "/somewhere/mnemos"
+	cwd := filepath.Join(os.Getenv("HOME"), "somewhere", "mnemos")
 	_ = os.MkdirAll(cwd, 0o755)
-	payload := `{"hook_event_name":"PostToolUse","cwd":"` + cwd + `","tool_name":"Edit","tool_input":{"file_path":"internal/rumination/store.go","old_string":"x","new_string":"y"}}`
+	payload := hookPayload(t, map[string]any{
+		"hook_event_name": "PostToolUse",
+		"cwd":             cwd,
+		"tool_name":       "Edit",
+		"tool_input": map[string]any{
+			"file_path":  "internal/rumination/store.go",
+			"old_string": "x",
+			"new_string": "y",
+		},
+	})
 	withStdin(t, payload, func() {
 		if err := runHookPostTool(ctx, nil); err != nil {
 			t.Fatalf("hook: %v", err)
