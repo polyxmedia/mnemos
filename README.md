@@ -35,6 +35,16 @@ mnemos doctor
 
 The installer runs `mnemos init`, which auto wires Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Restart your agent and the `mnemos_*` tools show up next session.
 
+Or with Homebrew:
+
+```bash
+brew install polyxmedia/tap/mnemos
+mnemos init
+mnemos doctor
+```
+
+Brew gets you `brew upgrade mnemos` for free, the curl installer auto-wires agent clients in one shot. Either path works.
+
 For Claude Code, also install the agent skill so it records back to the store on its own:
 
 ```bash
