@@ -1,13 +1,15 @@
 # Mnemos
 
-Persistent memory for AI coding agents. MCP server, single Go binary, no Python, no CGO.
+Mnemos is a memory layer for AI coding agents. I built it because Claude Code keeps forgetting conventions, corrections, and decisions between sessions, and that gets old fast.
 
 [![release](https://img.shields.io/github/v/release/polyxmedia/mnemos?sort=semver)](https://github.com/polyxmedia/mnemos/releases)
 [![CI](https://github.com/polyxmedia/mnemos/actions/workflows/ci.yml/badge.svg)](https://github.com/polyxmedia/mnemos/actions/workflows/ci.yml)
 [![coverage](https://codecov.io/gh/polyxmedia/mnemos/branch/main/graph/badge.svg)](https://codecov.io/gh/polyxmedia/mnemos)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-You correct your agent for retrying blindly on a 401. Mnemos stores:
+Most memory tools care about retrieval, how stuff comes back out. I care more about whether anything gets recorded in the first place, because agents almost never bother unless you force them. So mnemos has both, and it ships with a verifier that runs Claude twice on a fixed scenario set (once with mnemos enabled, once disabled) so you can actually see what changes.
+
+The basic shape: you correct your agent for retrying blindly on a 401. Mnemos stores:
 
 ```json
 {
@@ -18,11 +20,11 @@ You correct your agent for retrying blindly on a 401. Mnemos stores:
 }
 ```
 
-Next session, the entry surfaces in the agent's prewarm context before it reaches that code path. Three corrections that cluster on the same `(agent, project, topic)` get promoted into a skill by the consolidation pass. No LLM runs inside the memory layer; promotion is deterministic pattern-mining over structured records.
+Next session, that entry surfaces in the prewarm context before the agent gets near that code path again. Three corrections clustered on the same agent, project, and topic get promoted into a skill by the consolidation pass. There's no LLM running inside the memory layer, just clustering and templating over structured records, so the same input always gives you the same output and you can audit the whole pipeline end to end.
 
-`mnemos replay <session_id>` regenerates a past session as markdown with everything recorded since layered in.
+`mnemos replay <session_id>` regenerates a past session as markdown with everything you've recorded since layered in. Useful for "what would I do differently now" sessions.
 
-State lives in `~/.mnemos/mnemos.db` (SQLite). One static Go binary, ~15 MB, Linux/macOS/Windows × amd64/arm64.
+Single static Go binary, ~15 MB, runs on Linux, macOS, and Windows. State lives in `~/.mnemos/mnemos.db` (SQLite).
 
 ## Install
 
@@ -31,9 +33,9 @@ curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/inst
 mnemos doctor
 ```
 
-The installer runs `mnemos init`, which auto-wires Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Restart your agent.
+The installer runs `mnemos init`, which auto wires Claude Code, Claude Desktop, Cursor, Windsurf, and OpenAI Codex CLI. Restart your agent and the `mnemos_*` tools show up next session.
 
-For Claude Code, also install the agent skill so it records back to the store:
+For Claude Code, also install the agent skill so it records back to the store on its own:
 
 ```bash
 mkdir -p ~/.claude/skills/mnemos
@@ -41,13 +43,15 @@ curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/.claude/skil
   -o ~/.claude/skills/mnemos/SKILL.md
 ```
 
-Other paths: `go install github.com/polyxmedia/mnemos/cmd/mnemos@latest` or [release binaries](https://github.com/polyxmedia/mnemos/releases). `mnemos update` self-updates with sha256 verification.
+Other paths: `go install github.com/polyxmedia/mnemos/cmd/mnemos@latest` or grab a [release binary](https://github.com/polyxmedia/mnemos/releases). `mnemos update` swaps the binary in place after verifying its sha256.
 
 ## Verify
 
+I got tired of memory tools claiming lift without measuring it, so I built a harness. Three modes:
+
 ```bash
 mnemos verify retrieval   # do memories surface for their trigger queries?
-mnemos verify behavior    # does the agent behave differently on vs off?
+mnemos verify behavior    # does the agent behave differently with mnemos on vs off?
 mnemos verify capture     # does the agent record corrections handed to it?
 ```
 
@@ -63,9 +67,9 @@ migration_locked_refused        5/5   5/5    +0%
 overall                         25/25 15/25  +40%
 ```
 
-Lift concentrates on contrarian/project-specific conventions and the recursive case where the agent forgets to call its own memory tools. On widely-known practices the model already gets right, on-arm and off-arm match exactly.
+The lift concentrates on two places. First, contrarian or project-specific conventions, where the model has no prior to lean on. Second, the recursive case where the agent forgets to use its own memory tools at all (looking at you, `session_start_on_edit`). On widely-known practices the model already gets right, mnemos doesn't add anything, and it doesn't subtract either, on-arm and off-arm match exactly.
 
-Capture rate, n=3 per scenario, after two rounds of lever tuning (baseline was 7%):
+Capture is the uglier half. Baseline was 7%. I tuned trigger-phrase examples in the tool descriptions and got a few points. The structural fix that actually moved the number was a `UserPromptSubmit` hook that pattern matches correction-shaped phrasing in your prompt and emits a `[mnemos: capture required]` directive into context, basically making the trigger non skippable. That got it to 53%.
 
 ```
 scenario                        captured  rate
@@ -77,55 +81,53 @@ architectural_decision          0/3         0%
 overall                         8/15       53%
 ```
 
-The 7→53% jump came from a `UserPromptSubmit` hook that emits a `[mnemos: capture required]` directive when the user's message matches correction-shaped phrasing. Trigger-phrase examples in MCP tool descriptions added a few points; the hook did the rest. Architectural decisions buried in larger task prompts still sit at 0/3. Open problem.
+Architectural decisions buried inside larger task prompts still sit at 0/3 even with the directive lever, the bigger task framing seems to override the capture cue. I don't have a clean fix for that yet. If you've got ideas I'd love to hear them.
 
 Fixtures and runner: [`verify/`](verify/).
 
 ## Design
 
+The interesting parts. If you skim anything, skim here.
+
 ### Correction journal
 
-`tried / wrong_because / fix` is a first-class observation type with retrieval boosting. The agent records a mistake once; the entry surfaces in future sessions on the same topic.
+Corrections have their own observation type with the schema `tried / wrong_because / fix`. Search ranks them above generic observations on the same topic, so when you're about to walk the same path again the past mistake surfaces first.
 
 ### Skill promotion
 
-The consolidation pass clusters corrections by `(agent, project, topic)`. Three or more in the same cluster mint a skill with `## When this applies`, `## Avoid`, and `## Do` sections, synthesised from the underlying records. Idempotent via stable origin hash; a second pass extends the existing skill and bumps the version.
+The consolidation pass clusters corrections by agent, project, and topic. Three or more in the same cluster get templated into a skill, and a stable origin hash means a second pass extends the existing skill instead of creating a new one. The whole thing is deterministic, no LLM is calling itself in a loop deciding what counts as similar enough.
 
 ### Rumination
 
-Threshold monitors flag stale, low-effectiveness, or contradicted skills as candidates for review. Resolution requires a falsifiable `why_better` field naming a prediction the revision makes that the prior version did not. Revisions invalidate the old entry through the bi-temporal store; the dream pass auto-closes candidates whose target carries a `ruminated-from:<id>` tag.
+Skills rot. Threshold monitors flag the ones that drop in effectiveness, sit untouched for months, keep accumulating corrections after promotion, or get explicitly contradicted by a `contradicts` link. Once a skill is flagged you can't just edit it, you have to write down what new prediction the new version makes that the old one didn't. It's a Popperian guard at the tool boundary, basically forcing falsifiability into the revision process so you can't quietly paper over a wrong belief.
 
 ### Bi-temporal store
 
-Facts carry valid and invalid timestamps. Default retrieval surfaces only currently-valid facts; superseded knowledge remains queryable for replay and audit.
+Facts have valid and invalid timestamps. The default ranker only surfaces currently valid facts, but old ones stay queryable for replay and audit. Same idea Graphiti uses, the implementation is just much simpler.
 
 ### Prompt-injection scanner
 
-Runs at the memory-write boundary. Sanitises low-risk content; wraps high-risk content (instruction overrides, zero-width unicode, bidi overrides, fake tool-call syntax, MCP spoofing) in a `[MNEMOS: FLAGGED]` banner before it reaches the model.
+Memory stores are a write-time attack surface. Anything that can write an observation can plant fake tool-call syntax, MCP spoofing payloads, zero-width unicode, bidi overrides, or instruction overrides, all the stuff that ends up in your context next session and looks like it came from you. The scanner runs at write time and either sanitises the content or wraps it in a `[MNEMOS: FLAGGED]` banner so the model can see it for what it is.
 
 ### Hybrid retrieval
 
-BM25 + cosine similarity via Reciprocal Rank Fusion. Auto-enables when Ollama is reachable. Falls back to pure FTS5.
+BM25 plus cosine similarity via Reciprocal Rank Fusion. Auto enables when Ollama is reachable. Falls back to pure FTS5 when it isn't, which is fine for most projects, embeddings only really pay off on paraphrased queries.
 
 ### Composed prewarm
 
-`mnemos_session_start` and the `SessionStart` hook return a ranked, token-budgeted block (conventions + recent sessions + matching skills + corrections + hot files) capped at 500 tokens by default. Fires once per session. No per-turn cost.
+`mnemos_session_start` and the `SessionStart` hook return a token budgeted block (conventions, recent sessions, matching skills, corrections, hot files) capped at 500 tokens by default. Fires once per session, no per-turn cost. I measured: empty store is ~20 tokens, populated hits the cap around 460.
 
 ### Compaction recovery
 
-`mnemos_context` in `recovery` mode reconstructs goal, decisions, and in-session observations after a context compaction.
+When Claude Code compacts mid-session you lose your in-session state. `mnemos_context` in `recovery` mode reconstructs goal, decisions, and in-session observations so the agent can keep going.
 
-### Skill packs
+### Skill packs and Obsidian export
 
-Export any skill as a JSON pack, share by file or URL, install with `mnemos skill import <file-or-url>`. Runtime stats stripped, pack versioning strict.
-
-### Obsidian export
-
-`mnemos vault export|watch` writes a markdown graph with wikilinks.
+Export a skill as a JSON pack, share by file or URL, install with `mnemos skill import <file-or-url>`. Or run `mnemos vault export|watch` to write the whole store as a markdown graph with wikilinks, in case you want to read it in Obsidian.
 
 ## Setup per agent
 
-`mnemos init` is idempotent and handles all of the below. Manual configurations:
+`mnemos init` is idempotent and handles all of the below. Manual configurations if you'd rather:
 
 ### Claude Code
 
@@ -173,15 +175,17 @@ args    = ["serve"]
 
 ### Any MCP-compatible client
 
-Stdio: point the client at `mnemos serve`. Server advertises 16 tools and 3 resources on the `initialize` handshake (20 tools with rumination enabled).
+Stdio: point the client at `mnemos serve`. The server advertises 16 tools and 3 resources on the `initialize` handshake (20 tools when rumination is enabled).
 
 ### HTTP transport
+
+For multi-agent or remote setups:
 
 ```bash
 MNEMOS_API_KEY=$(openssl rand -hex 32) mnemos serve --http :8080
 ```
 
-Use `pkg/client` from Go or `POST /v1/observations` directly. Reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
+Use `pkg/client` from Go or call `POST /v1/observations` directly. Reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 
 ## CLI
 
@@ -216,7 +220,7 @@ Parameters: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
 
 ## Configuration
 
-`~/.mnemos/config.toml`, auto-created on first run. All fields optional.
+`~/.mnemos/config.toml`, auto-created on first run. Every field is optional.
 
 ```toml
 [storage]
@@ -258,7 +262,7 @@ http_addr = ":8080"
 api_key   = ""
 ```
 
-By default no data leaves the machine. Network calls happen only when `[embedding].provider = "openai"` or `[server].transport = "http"`.
+Nothing leaves your machine by default. Network calls only happen if you set `[embedding].provider = "openai"` or run with `[server].transport = "http"`.
 
 ## Architecture
 
@@ -279,7 +283,7 @@ internal/installer    agent client wire-up
 pkg/client            typed Go HTTP client
 ```
 
-Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Build
 
@@ -290,8 +294,8 @@ make lint           # golangci-lint
 make release V=v0.X.Y
 ```
 
-Coverage 70% overall, 80 to 95% on core domain packages. API stable at v0.1.x; bi-temporal schema means migrations are non-breaking.
+Coverage 70% overall, 80 to 95% on the core domain packages. API is stable at v0.1.x and the schema is bi-temporal so migrations stay non-breaking.
 
 ## License
 
-MIT. By [André Figueira](https://x.com/voidmode) at [Polyxmedia](https://polyxmedia.com). [AUTHORS.md](AUTHORS.md), [ROADMAP.md](ROADMAP.md), [CONTRIBUTING.md](CONTRIBUTING.md).
+MIT. By [André Figueira](https://x.com/voidmode) at [Polyxmedia](https://polyxmedia.com). [AUTHORS.md](AUTHORS.md), [ROADMAP.md](ROADMAP.md), [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome, I read them.
