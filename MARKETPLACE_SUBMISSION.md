@@ -1,10 +1,15 @@
 # Marketplace submission packet
 
 Three Claude Code marketplaces, ranked by likely impact-per-effort. The
-manifests in this repo (`plugin.json`, `marketplace.extended.json`,
-`.claude-plugin/marketplace.json`) are the source of truth — every text
-asset below is also reflected in those files. Tag a release before
-submitting (so each marketplace can pin to a version).
+manifests in this repo (`plugin.json`, `.claude-plugin/plugin.json`,
+`marketplace.extended.json`, `.claude-plugin/marketplace.json`) are the
+source of truth — every text asset below is also reflected in those files.
+Tag a release before submitting (so each marketplace can pin to a version).
+
+The Claude Code plugin loader reads the manifest at
+`.claude-plugin/plugin.json`; the tonsofskills validator and the documented
+`jq` checks read the root `plugin.json`. The two are kept byte-identical and
+CI fails the build if they drift, so a version bump must touch both.
 
 ## Shared assets
 
@@ -48,6 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/inst
 
 **What's already in the repo**:
 - `plugin.json` — strict 8-field allowlist, exactly the schema CI accepts
+  (mirrored at `.claude-plugin/plugin.json` for the Claude Code plugin loader)
 - `marketplace.extended.json` — full required block including
   `category: ai-ml-assistance`, `features`, `requirements`
 
@@ -64,7 +70,8 @@ curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/inst
    Enterprise validation score: <run their validator first, aim for B+ / 75+>
 
    Notes:
-   - plugin.json and marketplace.extended.json live in repo root.
+   - plugin.json and marketplace.extended.json live in repo root; the
+     Claude Code plugin manifest is at .claude-plugin/plugin.json.
    - Bundles MCP server (19 tools) + Claude Code skill at
      .claude/skills/mnemos/SKILL.md, both shipped from the same Go binary.
    - Repo includes its own efficacy harness (`mnemos verify`) so future
@@ -160,8 +167,10 @@ Run before opening any issue / sending any email:
 - [ ] Sanity-check the three manifests parse:
       ```
       jq . plugin.json
+      jq . .claude-plugin/plugin.json
       jq . marketplace.extended.json
       jq . .claude-plugin/marketplace.json
+      diff plugin.json .claude-plugin/plugin.json   # must be identical
       ```
 - [ ] Confirm SKILL.md frontmatter renders correctly when GitHub previews
       it (paste into a markdown viewer if unsure)
