@@ -24,7 +24,7 @@ About):
 
 **Long description** (tonsofskills, GitHub topics):
 > Persistent memory and learning-loop skills for AI coding agents.
-> MCP-native with 19 tools, single Go binary, ships with measured
+> MCP-native with 20 tools, single Go binary, ships with measured
 > efficacy harness.
 
 **Install command** (the format claudemarketplaces.com renders):
@@ -65,14 +65,14 @@ curl -fsSL https://raw.githubusercontent.com/polyxmedia/mnemos/main/scripts/inst
    Repo URL: https://github.com/polyxmedia/mnemos
    Category: ai-ml-assistance
    Description: Persistent memory and learning-loop skills for AI coding
-     agents. MCP-native with 19 tools, single Go binary, ships with measured
+     agents. MCP-native with 20 tools, single Go binary, ships with measured
      efficacy harness.
    Enterprise validation score: <run their validator first, aim for B+ / 75+>
 
    Notes:
    - plugin.json and marketplace.extended.json live in repo root; the
      Claude Code plugin manifest is at .claude-plugin/plugin.json.
-   - Bundles MCP server (19 tools) + Claude Code skill at
+   - Bundles MCP server (20 tools) + Claude Code skill at
      .claude/skills/mnemos/SKILL.md, both shipped from the same Go binary.
    - Repo includes its own efficacy harness (`mnemos verify`) so future
      changes are tracked against measured numbers.
