@@ -134,10 +134,14 @@ func TestSaveClampsTrustTierBySourceKind(t *testing.T) {
 		{"tool wants skill -> raw", memory.SourceTool, memory.TrustSkill, memory.TrustRaw},
 		{"agent_inference wants curated -> raw", memory.SourceAgentInference, memory.TrustCurated, memory.TrustRaw},
 		{"import wants curated -> raw", memory.SourceImport, memory.TrustCurated, memory.TrustRaw},
-		// Trusted producers keep the tier they asked for.
+		// A caller forging source_kind="dream" must not buy a trusted tier:
+		// nothing internal writes SourceDream, so it is treated as untrusted.
+		{"forged dream wants curated -> raw", memory.SourceDream, memory.TrustCurated, memory.TrustRaw},
+		{"forged dream wants skill -> raw", memory.SourceDream, memory.TrustSkill, memory.TrustRaw},
+		// Only the user (the one source a caller cannot meaningfully forge
+		// without already controlling the session) keeps its requested tier.
 		{"user keeps curated", memory.SourceUser, memory.TrustCurated, memory.TrustCurated},
 		{"user may self-quarantine", memory.SourceUser, memory.TrustRaw, memory.TrustRaw},
-		{"dream keeps curated", memory.SourceDream, memory.TrustCurated, memory.TrustCurated},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

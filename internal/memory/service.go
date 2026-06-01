@@ -178,20 +178,27 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	return &SaveResult{Observation: o, Deduped: false}, nil
 }
 
-// clampTrustTier enforces the quarantine invariant: only user-authored and
-// dream-pass observations may occupy a trusted tier. Every other source —
-// tool output, agent inference, imports — is forced to raw no matter what
-// the caller requested. This is the server-side backstop behind the Bet 2
-// provenance model; without it the quarantine is opt-in by the writer, so
-// poisoned tool output or an injection-driven agent could land straight in
-// the searchable curated set just by leaving trust_tier unset.
+// clampTrustTier enforces the quarantine invariant: only user-authored
+// observations may occupy the tier the caller requested. Every other source
+// — tool output, agent inference, imports, and dream — is forced to raw no
+// matter what trust_tier the caller asked for. This is the server-side
+// backstop behind the Bet 2 provenance model; without it the quarantine is
+// opt-in by the writer, so poisoned tool output or an injection-driven agent
+// could land straight in the searchable curated set just by leaving
+// trust_tier unset.
+//
+// SourceDream is deliberately NOT trusted here. Nothing internal writes with
+// SourceDream (the dream pass journals as the default SourceUser), so the
+// only way a row carries it is an external mnemos_save asserting
+// source_kind="dream" — which would otherwise be a free pass into the
+// trusted tier. If a future internal consolidation path needs to write
+// trusted dream content, it must set the tier through a privileged path, not
+// by self-asserting this source kind over the public tool surface.
 func clampTrustTier(sk SourceKind, requested TrustTier) TrustTier {
-	switch sk {
-	case SourceUser, SourceDream:
+	if sk == SourceUser {
 		return requested
-	default:
-		return TrustRaw
 	}
+	return TrustRaw
 }
 
 // embedText assembles the text we embed for an observation. Title + content
