@@ -119,6 +119,48 @@ func TestTrustTierValid(t *testing.T) {
 	}
 }
 
+func TestSaveClampsTrustTierBySourceKind(t *testing.T) {
+	svc := newService(t, nil)
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		source    memory.SourceKind
+		requested memory.TrustTier
+		want      memory.TrustTier
+	}{
+		// Untrusted producers are forced to raw no matter what they ask for.
+		{"tool wants curated -> raw", memory.SourceTool, memory.TrustCurated, memory.TrustRaw},
+		{"tool wants skill -> raw", memory.SourceTool, memory.TrustSkill, memory.TrustRaw},
+		{"agent_inference wants curated -> raw", memory.SourceAgentInference, memory.TrustCurated, memory.TrustRaw},
+		{"import wants curated -> raw", memory.SourceImport, memory.TrustCurated, memory.TrustRaw},
+		// Trusted producers keep the tier they asked for.
+		{"user keeps curated", memory.SourceUser, memory.TrustCurated, memory.TrustCurated},
+		{"user may self-quarantine", memory.SourceUser, memory.TrustRaw, memory.TrustRaw},
+		{"dream keeps curated", memory.SourceDream, memory.TrustCurated, memory.TrustCurated},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := svc.Save(ctx, memory.SaveInput{
+				// Unique content per case so dedup never collapses two saves.
+				Title:      "clamp",
+				Content:    "clamp body " + c.name,
+				Type:       memory.TypeContext,
+				Project:    "p",
+				SourceKind: c.source,
+				TrustTier:  c.requested,
+			})
+			if err != nil {
+				t.Fatalf("case %d save: %v", i, err)
+			}
+			if res.Observation.TrustTier != c.want {
+				t.Errorf("source=%q requested=%q: got tier %q, want %q",
+					c.source, c.requested, res.Observation.TrustTier, c.want)
+			}
+		})
+	}
+}
+
 func TestRawTierExcludedFromDefaultSearch(t *testing.T) {
 	svc := newService(t, nil)
 	ctx := context.Background()

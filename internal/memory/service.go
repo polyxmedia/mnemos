@@ -113,6 +113,14 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	if !trustTier.Valid() {
 		return nil, fmt.Errorf("save: invalid trust_tier %q", trustTier)
 	}
+	// Quarantine clamp: trust tier must not be writer-opt-in. Content that
+	// did not come straight from the user (tool output, the agent's own
+	// inference, imports) is forced to the raw tier regardless of what the
+	// caller asked for, so a compromised tool or injection-driven agent
+	// cannot self-promote into the trusted, searchable set by simply
+	// omitting trust_tier. Downgrade is silent rather than an error so
+	// honest callers that don't set the field keep working.
+	trustTier = clampTrustTier(sourceKind, trustTier)
 
 	// Dedup: if the same (agent, project, content_hash) already lives, bump
 	// access and return without writing. Invalidated rows don't count — a
@@ -168,6 +176,22 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	}
 
 	return &SaveResult{Observation: o, Deduped: false}, nil
+}
+
+// clampTrustTier enforces the quarantine invariant: only user-authored and
+// dream-pass observations may occupy a trusted tier. Every other source —
+// tool output, agent inference, imports — is forced to raw no matter what
+// the caller requested. This is the server-side backstop behind the Bet 2
+// provenance model; without it the quarantine is opt-in by the writer, so
+// poisoned tool output or an injection-driven agent could land straight in
+// the searchable curated set just by leaving trust_tier unset.
+func clampTrustTier(sk SourceKind, requested TrustTier) TrustTier {
+	switch sk {
+	case SourceUser, SourceDream:
+		return requested
+	default:
+		return TrustRaw
+	}
 }
 
 // embedText assembles the text we embed for an observation. Title + content
