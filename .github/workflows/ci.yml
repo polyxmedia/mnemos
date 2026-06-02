@@ -50,3 +50,21 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Every distribution manifest must be valid JSON.
+      - name: Manifests parse
+        run: |
+          for f in plugin.json .claude-plugin/plugin.json \
+                   .claude-plugin/marketplace.json marketplace.extended.json; do
+            jq . "$f" > /dev/null
+          done
+      # The Claude Code plugin loader reads .claude-plugin/plugin.json while
+      # the tonsofskills validator and the documented jq checks read the
+      # root copy. They must stay byte-identical so a version bump to one
+      # can't leave the other stale.
+      - name: Plugin manifests in sync
+        run: diff plugin.json .claude-plugin/plugin.json
