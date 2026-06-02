@@ -217,6 +217,75 @@ func (f *promoteFixture) seedCorrection(t *testing.T, project, tag, title string
 	return sess.ID
 }
 
+// seedRawCorrection writes a correction pinned to the raw quarantine tier.
+// SourceTool is clamped to raw by memory.Service.Save, mirroring how a
+// poisoned tool output or injection-driven save actually lands.
+func (f *promoteFixture) seedRawCorrection(t *testing.T, project, tag, title string) {
+	t.Helper()
+	sess, err := f.sess.Open(context.Background(), session.OpenInput{Project: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := correctionData{
+		Tried:        "tried " + title,
+		WrongBecause: "because " + title,
+		Fix:          "fix for " + title,
+	}
+	raw, _ := json.Marshal(c)
+	res, err := f.mem.Save(context.Background(), memory.SaveInput{
+		Title: title, Content: title, Type: memory.TypeCorrection,
+		Tags: []string{tag}, Project: project, SessionID: sess.ID,
+		Structured: string(raw), Importance: 8,
+		SourceKind: memory.SourceTool,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Observation.TrustTier != memory.TrustRaw {
+		t.Fatalf("setup: expected raw correction, got tier %q", res.Observation.TrustTier)
+	}
+}
+
+func TestPromoteExcludesRawTierCorrections(t *testing.T) {
+	f := newPromoteFixture(t)
+	ctx := context.Background()
+	// Three raw corrections in one group: above the count threshold, but
+	// every one is quarantined, so none may be laundered into a skill.
+	for i := 0; i < 3; i++ {
+		f.seedRawCorrection(t, "api", "oauth", "oauth retry "+string(rune('a'+i)))
+	}
+
+	j, err := f.ds.Run(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Promoted != 0 {
+		t.Errorf("raw-tier corrections must never promote, got %d", j.Promoted)
+	}
+	list, _ := f.sk.List(ctx, "")
+	if len(list) != 0 {
+		t.Errorf("no skill should be created from raw corrections, got %d", len(list))
+	}
+}
+
+func TestPromoteRawCorrectionsDoNotCountTowardThreshold(t *testing.T) {
+	f := newPromoteFixture(t)
+	ctx := context.Background()
+	// Two curated corrections (legitimate) plus one raw in the same group.
+	// The raw one must not push the curated pair over the threshold of 3.
+	f.seedCorrection(t, "api", "oauth", "oauth a")
+	f.seedCorrection(t, "api", "oauth", "oauth b")
+	f.seedRawCorrection(t, "api", "oauth", "oauth poisoned")
+
+	j, err := f.ds.Run(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Promoted != 0 {
+		t.Errorf("raw corrections must not count toward the promotion threshold, got %d", j.Promoted)
+	}
+}
+
 func TestPromoteBelowThresholdIsNoOp(t *testing.T) {
 	f := newPromoteFixture(t)
 	ctx := context.Background()

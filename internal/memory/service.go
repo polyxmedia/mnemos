@@ -113,6 +113,14 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	if !trustTier.Valid() {
 		return nil, fmt.Errorf("save: invalid trust_tier %q", trustTier)
 	}
+	// Quarantine clamp: trust tier must not be writer-opt-in. Content that
+	// did not come straight from the user (tool output, the agent's own
+	// inference, imports) is forced to the raw tier regardless of what the
+	// caller asked for, so a compromised tool or injection-driven agent
+	// cannot self-promote into the trusted, searchable set by simply
+	// omitting trust_tier. Downgrade is silent rather than an error so
+	// honest callers that don't set the field keep working.
+	trustTier = clampTrustTier(sourceKind, trustTier)
 
 	// Dedup: if the same (agent, project, content_hash) already lives, bump
 	// access and return without writing. Invalidated rows don't count — a
@@ -168,6 +176,29 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	}
 
 	return &SaveResult{Observation: o, Deduped: false}, nil
+}
+
+// clampTrustTier enforces the quarantine invariant: only user-authored
+// observations may occupy the tier the caller requested. Every other source
+// — tool output, agent inference, imports, and dream — is forced to raw no
+// matter what trust_tier the caller asked for. This is the server-side
+// backstop behind the Bet 2 provenance model; without it the quarantine is
+// opt-in by the writer, so poisoned tool output or an injection-driven agent
+// could land straight in the searchable curated set just by leaving
+// trust_tier unset.
+//
+// SourceDream is deliberately NOT trusted here. Nothing internal writes with
+// SourceDream (the dream pass journals as the default SourceUser), so the
+// only way a row carries it is an external mnemos_save asserting
+// source_kind="dream" — which would otherwise be a free pass into the
+// trusted tier. If a future internal consolidation path needs to write
+// trusted dream content, it must set the tier through a privileged path, not
+// by self-asserting this source kind over the public tool surface.
+func clampTrustTier(sk SourceKind, requested TrustTier) TrustTier {
+	if sk == SourceUser {
+		return requested
+	}
+	return TrustRaw
 }
 
 // embedText assembles the text we embed for an observation. Title + content

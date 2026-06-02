@@ -65,7 +65,21 @@ func (s *Service) promoteSkillsFromCorrections(ctx context.Context) (int, error)
 	if err != nil {
 		return 0, fmt.Errorf("list corrections: %w", err)
 	}
-	groups := groupCorrections(corrections)
+	// Quarantine guard: promotion elevates corrections into a trusted,
+	// surfaced skill, so raw-tier corrections must never feed it. Raw is
+	// where untrusted content lives (tool output, agent inference, imports,
+	// injection-driven saves clamped down in memory.Service.Save). Letting a
+	// raw correction promote would launder poisoned input into durable
+	// procedure — the exact MemoryGraft/MINJA persistence vector Bet 2
+	// exists to close. ListByProject has no tier predicate, so filter here.
+	eligible := make([]memory.Observation, 0, len(corrections))
+	for _, c := range corrections {
+		if c.TrustTier == memory.TrustRaw {
+			continue
+		}
+		eligible = append(eligible, c)
+	}
+	groups := groupCorrections(eligible)
 
 	n := 0
 	for _, g := range groups {

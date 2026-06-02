@@ -199,7 +199,7 @@ type saveArgs struct {
 	ValidUntil  string   `json:"valid_until,omitempty" jsonschema:"RFC3339 fact-time upper bound"`
 	Rationale   string   `json:"rationale,omitempty" jsonschema:"the WHY — surfaced in prewarm"`
 	SourceKind  string   `json:"source_kind,omitempty" jsonschema:"user|tool|agent_inference|dream|import — defaults to user"`
-	TrustTier   string   `json:"trust_tier,omitempty" jsonschema:"raw|curated|skill — defaults to curated; use raw for unverified tool output"`
+	TrustTier   string   `json:"trust_tier,omitempty" jsonschema:"raw|curated|skill — only user-sourced saves keep this; any non-user source_kind is quarantined to raw automatically regardless of this value"`
 	DerivedFrom []string `json:"derived_from,omitempty" jsonschema:"parent observation IDs this memory was derived from"`
 }
 
