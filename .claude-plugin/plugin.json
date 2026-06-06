@@ -1,6 +1,6 @@
 {
   "name": "mnemos",
-  "version": "0.5.1",
+  "version": "0.5.8",
   "description": "Persistent memory and learning-loop skills for AI coding agents. MCP-native with 20 tools, single Go binary, ships with measured efficacy harness.",
   "author": {
     "name": "André Figueira",
