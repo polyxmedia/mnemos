@@ -68,6 +68,57 @@ func TestSessionRecentFiltersByAgent(t *testing.T) {
 	}
 }
 
+func TestSessionListOpenScopesAndOrders(t *testing.T) {
+	db := openSessDB(t)
+	store := db.Sessions()
+	ctx := context.Background()
+
+	// Explicit distinct Go timestamps: ListOpen orders by started_at and
+	// same-second inserts would make newest-first assertions collide.
+	base := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	older := &session.Session{
+		ID: ulid.Make().String(), AgentID: "default",
+		Project: "p", StartedAt: base,
+	}
+	newer := &session.Session{
+		ID: ulid.Make().String(), AgentID: "default",
+		Project: "p", StartedAt: base.Add(time.Second),
+	}
+	other := &session.Session{
+		ID: ulid.Make().String(), AgentID: "default",
+		Project: "q", StartedAt: base,
+	}
+	closed := &session.Session{
+		ID: ulid.Make().String(), AgentID: "default",
+		Project: "p", StartedAt: base,
+	}
+	for _, s := range []*session.Session{older, newer, other, closed} {
+		if err := store.Insert(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = store.Close(ctx, session.CloseInput{ID: closed.ID, Summary: "done", Status: session.StatusOK})
+
+	open, err := store.ListOpen(ctx, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 2 {
+		t.Fatalf("want 2 open sessions in project p, got %d", len(open))
+	}
+	if open[0].ID != newer.ID {
+		t.Errorf("want newest first, got %s", open[0].ID)
+	}
+
+	all, err := store.ListOpen(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Errorf("unscoped should return all open sessions, got %d", len(all))
+	}
+}
+
 func TestSessionCurrentNoneWhenAllClosed(t *testing.T) {
 	db := openSessDB(t)
 	store := db.Sessions()

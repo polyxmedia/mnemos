@@ -35,6 +35,8 @@ func runDream(ctx context.Context, args []string) error {
 		Reader:      d.db.Observations(),
 		Skills:      d.skl,
 		Rumination:  d.rum,
+		Sessions:    d.db.Sessions(),
+		Injections:  d.db.Injections(),
 		Logger:      slog.Default(),
 		StaleDays:   d.cfg.Dream.StaleDays,
 		DecayAmount: d.cfg.Dream.DecayAmount,

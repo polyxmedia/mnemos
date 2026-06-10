@@ -43,6 +43,7 @@ var commands = map[string]handler{
 	"serve":     runServe,
 	"search":    runSearch,
 	"stats":     runStats,
+	"digest":    runDigest,
 	"sessions":  runSessions,
 	"export":    runExport,
 	"import":    runImport,
@@ -87,6 +88,7 @@ Commands:
   serve [--http ADDR]    Start the MCP stdio server (or HTTP if --http given)
   search <query>         Search observations from the terminal
   stats                  Show memory statistics
+  digest [--since 24h]   Activity summary: saves, surfacing, sessions, dreams
   sessions               List recent sessions
   export [file]          Export all data as JSON
   import <file>          Import data from JSON

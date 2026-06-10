@@ -9,12 +9,31 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
+
+// projectFromHook derives the project name from the hook payload's cwd,
+// falling back to the process working directory. Same derivation the
+// prewarm command uses, so SessionStart and SessionEnd agree on which
+// project a session belongs to.
+func projectFromHook(in hookInput) string {
+	cwd := in.CWD
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
+	if cwd == "" {
+		return ""
+	}
+	return filepath.Base(cwd)
+}
 
 // runHook is the parent dispatcher for harness-side hook subcommands. Each
 // leaf command reads a Claude Code hook payload from stdin (shape documented
@@ -92,7 +111,11 @@ func runHookUserPrompt(ctx context.Context, _ []string) error {
 		}
 	}
 
-	emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt)
+	var sessID, agentID string
+	if sess != nil {
+		sessID, agentID = sess.ID, sess.AgentID
+	}
+	emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt, agentID, projectFromHook(in), sessID)
 	emitCaptureDirective(os.Stdout, in.Prompt)
 	return nil
 }
@@ -208,8 +231,9 @@ const promptMemoryMaxHits = 3
 // emitPromptMemoryBlock searches mnemos for the user's prompt and writes a
 // compact context block to w when at least one hit clears the score floor.
 // Best-effort: every error path produces zero stdout so a hook bug never
-// poisons the agent's context.
-func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt string) {
+// poisons the agent's context. Kept hits are recorded in the injection log
+// (channel prompt_hook) so surfaced-vs-used ratios cover this path too.
+func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, agentID, project, sessionID string) {
 	if prompt == "" || d == nil {
 		return
 	}
@@ -230,6 +254,7 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt str
 		return
 	}
 	fmt.Fprintln(w, "[mnemos: prior memory relevant to this prompt — apply or address]")
+	refs := make([]injection.Ref, 0, len(kept))
 	for _, h := range kept {
 		title := h.Observation.Title
 		if title == "" {
@@ -243,7 +268,10 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt str
 			snippet = snippet[:237] + "…"
 		}
 		fmt.Fprintf(w, "- [%s] %s — %s\n", h.Observation.Type, title, snippet)
+		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: h.Observation.ID})
 	}
+	_ = injection.NewLogger(d.db.Injections(), nil).
+		Log(ctx, injection.ChannelPromptHook, agentID, project, sessionID, refs)
 }
 
 // truncateGoal folds whitespace and caps to maxAutoGoalChars, appending an
@@ -275,16 +303,7 @@ func runHookPostTool(ctx context.Context, _ []string) error {
 		return nil
 	}
 
-	cwd := in.CWD
-	if cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
-			cwd = wd
-		}
-	}
-	proj := ""
-	if cwd != "" {
-		proj = filepath.Base(cwd)
-	}
+	proj := projectFromHook(in)
 
 	d, err := loadDeps(ctx)
 	if err != nil {
@@ -336,11 +355,14 @@ func filePathFromToolInput(m map[string]any) string {
 	return ""
 }
 
-// runHookSessionEnd handles Claude Code's SessionEnd event. If a mnemos
-// session is still open, close it with a summary stitched from recent
-// activity and a status derived from the reason Claude Code supplied.
-// No-ops when the agent already called mnemos_session_end properly —
-// session.Close guards on ended_at IS NULL and returns ErrNotFound.
+// runHookSessionEnd handles Claude Code's SessionEnd event. Closes every
+// open mnemos session for the project (SessionStart hooks installed at
+// both user and project scope each open one, so there can be twins) with
+// a summary stitched from recent activity and a status derived from the
+// reason Claude Code supplied. No-ops when the agent already called
+// mnemos_session_end properly — session.Close guards on ended_at IS NULL.
+// Finishes with a stale sweep so sessions orphaned by killed terminals
+// (no SessionEnd ever fires) don't stay open forever.
 func runHookSessionEnd(ctx context.Context, _ []string) error {
 	in := readHookStdin(os.Stdin)
 
@@ -351,31 +373,76 @@ func runHookSessionEnd(ctx context.Context, _ []string) error {
 	}
 	defer d.close()
 
-	sess, err := d.sess.Current(ctx, "")
-	if err != nil {
-		if errors.Is(err, session.ErrNotFound) {
-			return nil
-		}
-		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
-		return nil
-	}
-	if sess == nil {
-		return nil
-	}
-
-	summary := deriveSessionSummary(ctx, d, sess.ID)
+	proj := projectFromHook(in)
 	status := sessionStatusFromReason(in.Reason)
+	tags := []string{"auto-closed:" + sanitizeReason(in.Reason)}
 
-	err = d.sess.Close(ctx, session.CloseInput{
-		ID:          sess.ID,
-		Summary:     summary,
-		Status:      status,
-		OutcomeTags: []string{"auto-closed:" + sanitizeReason(in.Reason)},
-	})
-	if err != nil && !errors.Is(err, session.ErrNotFound) {
+	if proj == "" {
+		// No project derivable: closing all open sessions would hit other
+		// projects' live sessions, so fall back to the newest one only.
+		if sess, err := d.sess.Current(ctx, ""); err == nil && sess != nil {
+			closeSessionQuietly(ctx, d, session.CloseInput{
+				ID: sess.ID, Summary: deriveSessionSummary(ctx, d, sess.ID),
+				Status: status, OutcomeTags: tags,
+			})
+		} else if err != nil && !errors.Is(err, session.ErrNotFound) {
+			fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
+		}
+		sweepStaleSessions(ctx, d)
+		return nil
+	}
+
+	open, err := d.sess.ListOpen(ctx, proj)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
+		return nil
+	}
+	for _, sess := range open {
+		closeSessionQuietly(ctx, d, session.CloseInput{
+			ID: sess.ID, Summary: deriveSessionSummary(ctx, d, sess.ID),
+			Status: status, OutcomeTags: tags,
+		})
+	}
+
+	sweepStaleSessions(ctx, d)
+	return nil
+}
+
+// closeSessionQuietly closes one session, logging anything except the
+// benign already-closed race to stderr. Hooks never fail loudly.
+func closeSessionQuietly(ctx context.Context, d *deps, in session.CloseInput) {
+	if err := d.sess.Close(ctx, in); err != nil && !errors.Is(err, session.ErrNotFound) {
 		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
 	}
-	return nil
+}
+
+// staleSessionMaxAge is how long a session may stay open before the sweep
+// declares it abandoned. SessionEnd never fires for killed terminals or
+// crashed hosts, so without the sweep those sessions hold ended_at NULL
+// forever and pollute Current()/ListOpen() for every later hook.
+const staleSessionMaxAge = 24 * time.Hour
+
+// sweepStaleSessions closes open sessions older than staleSessionMaxAge
+// across all projects as abandoned. Runs piggybacked on SessionEnd — the
+// next clean exit anywhere tidies the whole store.
+func sweepStaleSessions(ctx context.Context, d *deps) {
+	open, err := d.sess.ListOpen(ctx, "")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook session-end:", err)
+		return
+	}
+	cutoff := time.Now().UTC().Add(-staleSessionMaxAge)
+	for _, sess := range open {
+		if !sess.StartedAt.Before(cutoff) {
+			continue
+		}
+		closeSessionQuietly(ctx, d, session.CloseInput{
+			ID:          sess.ID,
+			Summary:     "auto-closed as stale: open longer than 24h with no SessionEnd (terminal killed or hook never fired)",
+			Status:      session.StatusAbandoned,
+			OutcomeTags: []string{"auto-closed:stale"},
+		})
+	}
 }
 
 // deriveSessionSummary builds a one-line recap from recent activity on the
@@ -573,16 +640,7 @@ func emitCompactionRecoveryBlock(ctx context.Context, w io.Writer, event string)
 	}
 	defer d.close()
 
-	cwd := in.CWD
-	if cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
-			cwd = wd
-		}
-	}
-	proj := ""
-	if cwd != "" {
-		proj = filepath.Base(cwd)
-	}
+	proj := projectFromHook(in)
 
 	var sessID string
 	if sess, err := d.sess.Current(ctx, ""); err == nil && sess != nil {
@@ -597,6 +655,7 @@ func emitCompactionRecoveryBlock(ctx context.Context, w io.Writer, event string)
 		Skills:       d.db.Skills(),
 		Touches:      d.db.Touches(),
 		Rumination:   d.rum,
+		Injections:   injection.NewLogger(d.db.Injections(), nil),
 	})
 	block, err := pw.Build(ctx, prewarm.Request{
 		Mode:      prewarm.ModeCompactionRecovery,

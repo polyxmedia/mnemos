@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
@@ -330,6 +332,158 @@ func TestHookSessionEndNoOpenSessionIsSilent(t *testing.T) {
 			t.Errorf("hook must not error when no session is open: %v", err)
 		}
 	})
+}
+
+func TestHookSessionEndClosesAllOpenSessionsForProject(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	// User-scope and project-scope hook installs both fire SessionStart,
+	// so one Claude session leaves two open mnemos sessions. SessionEnd
+	// must close the set, not just the newest.
+	twinA, _ := d.sess.Open(ctx, session.OpenInput{Project: "mnemos", Goal: "ship"})
+	twinB, _ := d.sess.Open(ctx, session.OpenInput{Project: "mnemos"})
+	other, _ := d.sess.Open(ctx, session.OpenInput{Project: "otherproj", Goal: "unrelated"})
+	d.close()
+
+	cwd := filepath.Join(os.Getenv("HOME"), "code", "mnemos")
+	_ = os.MkdirAll(cwd, 0o755)
+	payload := hookPayload(t, map[string]any{
+		"hook_event_name": "SessionEnd",
+		"reason":          "logout",
+		"cwd":             cwd,
+	})
+	withStdin(t, payload, func() {
+		if err := runHookSessionEnd(ctx, nil); err != nil {
+			t.Fatalf("hook: %v", err)
+		}
+	})
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	for _, id := range []string{twinA.ID, twinB.ID} {
+		got, err := d2.sess.Get(ctx, id)
+		if err != nil {
+			t.Fatalf("get session: %v", err)
+		}
+		if got.EndedAt == nil {
+			t.Errorf("session %s must be closed, ended_at still nil", id)
+		}
+	}
+	// A live session in another project must survive the close.
+	gotOther, _ := d2.sess.Get(ctx, other.ID)
+	if gotOther.EndedAt != nil {
+		t.Error("session in another project must not be closed by this hook")
+	}
+}
+
+func TestHookSessionEndSweepsStaleSessions(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	// A session orphaned by a killed terminal: open for 25h in a project
+	// the hook is not even running in. Insert via the store so we can
+	// backdate started_at.
+	stale := &session.Session{
+		ID: "01STALESESSIONXXXXXXXXXXXX", AgentID: "default",
+		Project: "deadproj", StartedAt: time.Now().UTC().Add(-25 * time.Hour),
+	}
+	if err := d.db.Sessions().Insert(ctx, stale); err != nil {
+		t.Fatalf("insert stale: %v", err)
+	}
+	fresh, _ := d.sess.Open(ctx, session.OpenInput{Project: "freshproj"})
+	d.close()
+
+	cwd := filepath.Join(os.Getenv("HOME"), "code", "mnemos")
+	_ = os.MkdirAll(cwd, 0o755)
+	payload := hookPayload(t, map[string]any{
+		"hook_event_name": "SessionEnd",
+		"reason":          "logout",
+		"cwd":             cwd,
+	})
+	withStdin(t, payload, func() {
+		_ = runHookSessionEnd(ctx, nil)
+	})
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	got, err := d2.sess.Get(ctx, stale.ID)
+	if err != nil {
+		t.Fatalf("get stale session: %v", err)
+	}
+	if got.EndedAt == nil {
+		t.Fatal("25h-old open session must be swept closed")
+	}
+	if got.Status != session.StatusAbandoned {
+		t.Errorf("swept session must be StatusAbandoned, got %v", got.Status)
+	}
+	// A recent open session in another project must survive the sweep.
+	gotFresh, _ := d2.sess.Get(ctx, fresh.ID)
+	if gotFresh.EndedAt != nil {
+		t.Error("fresh session in another project must survive the sweep")
+	}
+}
+
+func TestHookUserPromptRecordsInjectionEvents(t *testing.T) {
+	withHome(t)
+	ctx := context.Background()
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	// BM25 needs corpus contrast for a hit to clear the score floor: a
+	// lone document scores too low, so pad the store with unrelated noise.
+	for i, title := range []string{"react hooks", "docker compose", "css grid", "git rebase", "tls certs"} {
+		if _, err := d.mem.Save(ctx, memory.SaveInput{
+			Title: title, Content: "unrelated filler content " + strings.Repeat("noise ", i+1),
+			Type: memory.TypeContext, Project: "mnemos",
+		}); err != nil {
+			t.Fatalf("save filler: %v", err)
+		}
+	}
+	saved, err := d.mem.Save(ctx, memory.SaveInput{
+		Title:   "bi-temporal timestamps need Go-side precision",
+		Content: "CURRENT_TIMESTAMP is second-precision; pass explicit time.Time for bi-temporal queries",
+		Type:    memory.TypeCorrection,
+		Project: "mnemos",
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	d.close()
+
+	payload := `{"hook_event_name":"UserPromptSubmit","prompt":"why do bi-temporal timestamps collide at second precision CURRENT_TIMESTAMP"}`
+	var out string
+	withStdin(t, payload, func() {
+		out = captureStdout(t, func() {
+			_ = runHookUserPrompt(ctx, nil)
+		})
+	})
+	if !strings.Contains(out, "bi-temporal") {
+		t.Fatalf("expected memory injection in hook output, got: %q", out)
+	}
+
+	d2, _ := loadDeps(ctx)
+	defer d2.close()
+	events, err := d2.db.Injections().ListByRef(ctx, injection.KindObservation, saved.Observation.ID, 10)
+	if err != nil {
+		t.Fatalf("list injections: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("want 1 injection event for surfaced memory, got %d", len(events))
+	}
+	if events[0].Channel != injection.ChannelPromptHook {
+		t.Errorf("want channel prompt_hook, got %s", events[0].Channel)
+	}
 }
 
 func TestPreToolDecisionPassesCleanSave(t *testing.T) {

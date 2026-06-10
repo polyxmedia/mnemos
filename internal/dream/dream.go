@@ -20,8 +20,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/rumination"
+	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
 
@@ -35,6 +37,11 @@ type Journal struct {
 	Decayed    int64
 	Linked     int64
 	Promoted   int
+
+	// PromotionDeferred counts correction clusters that cleared the
+	// frequency floor but were held back by the outcome gate this pass.
+	// They re-evaluate every pass as surfacing/outcome data accumulates.
+	PromotionDeferred int
 
 	// Ruminated counts candidates raised by the rumination detection
 	// monitors on this pass. Inserted = fresh breaches; Updated = repeat
@@ -57,6 +64,9 @@ func (j Journal) Summary() string {
 	fmt.Fprintf(&b, "- decayed: %d\n", j.Decayed)
 	fmt.Fprintf(&b, "- linked: %d\n", j.Linked)
 	fmt.Fprintf(&b, "- promoted: %d\n", j.Promoted)
+	if j.PromotionDeferred > 0 {
+		fmt.Fprintf(&b, "- promotion deferred (outcome gate): %d\n", j.PromotionDeferred)
+	}
 	fmt.Fprintf(&b, "- ruminated: %d new, %d updated, %d auto-resolved\n",
 		j.RuminatedInserted, j.RuminatedUpdated, j.RuminatedResolved)
 	for _, n := range j.Notes {
@@ -76,6 +86,8 @@ type Service struct {
 	reader     memory.Reader
 	skills     *skills.Service
 	rumination *rumination.Service
+	sessions   session.Store
+	injections injection.Store
 	log        *slog.Logger
 
 	staleDays      int
@@ -90,6 +102,8 @@ type Config struct {
 	Reader      memory.Reader       // optional; enables correction → skill promotion
 	Skills      *skills.Service     // optional; required alongside Reader for promotion
 	Rumination  *rumination.Service // optional; enables threshold-breach detection
+	Sessions    session.Store       // optional; enables the failed-session outcome signal in the promotion gate
+	Injections  injection.Store     // optional; enables the recurred-after-surfacing outcome signal in the promotion gate
 	Logger      *slog.Logger
 	StaleDays   int // importance decay kicks in past this many days idle; default 30
 	DecayAmount int // how much to subtract; default 1
@@ -116,6 +130,8 @@ func NewService(cfg Config) *Service {
 		reader:         cfg.Reader,
 		skills:         cfg.Skills,
 		rumination:     cfg.Rumination,
+		sessions:       cfg.Sessions,
+		injections:     cfg.Injections,
 		log:            cfg.Logger,
 		staleDays:      cfg.StaleDays,
 		decayAmount:    cfg.DecayAmount,
@@ -146,10 +162,11 @@ func (s *Service) Run(ctx context.Context, writeJournal bool) (*Journal, error) 
 	// 3. Skill promotion from correction clusters. Optional: guarded
 	// internally when reader/skills are not wired. Never fatal; the rest
 	// of the pass should complete even if promotion fails.
-	if promoted, err := s.promoteSkillsFromCorrections(ctx); err != nil {
+	if promoted, deferred, err := s.promoteSkillsFromCorrections(ctx); err != nil {
 		s.log.Warn("promote skills", "err", err)
 	} else {
 		j.Promoted = promoted
+		j.PromotionDeferred = deferred
 	}
 
 	// 4. Rumination detection. Flags skills whose effectiveness has

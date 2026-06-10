@@ -14,12 +14,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/rumination"
 	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
+
+// InjectionRecorder is the narrow surface prewarm needs from the injection
+// log: one batched write per built block. Declared at the consumer so tests
+// can capture surfacings with a two-line fake. A failed write must never
+// fail the prewarm — callers treat Log as fire-and-forget.
+type InjectionRecorder interface {
+	Log(ctx context.Context, channel injection.Channel, agentID, project, sessionID string, refs []injection.Ref) error
+}
 
 // RuminationReader is the narrow surface prewarm needs from the rumination
 // service: a queue pull (for the dedicated section) and a target lookup
@@ -42,6 +51,7 @@ type Service struct {
 	touches    memory.TouchStore
 	scanner    *safety.Scanner
 	rumination RuminationReader
+	injections InjectionRecorder
 	maxTokens  int
 }
 
@@ -56,7 +66,10 @@ type Config struct {
 	Touches      memory.TouchStore
 	Scanner      *safety.Scanner
 	Rumination   RuminationReader
-	MaxTokens    int
+	// Injections is optional; when nil, surfacings are still returned on
+	// the Block but nothing is persisted.
+	Injections InjectionRecorder
+	MaxTokens  int
 }
 
 // NewService constructs a pre-warm service. MaxTokens defaults to 500 —
@@ -76,6 +89,7 @@ func NewService(cfg Config) *Service {
 		touches:    cfg.Touches,
 		scanner:    cfg.Scanner,
 		rumination: cfg.Rumination,
+		injections: cfg.Injections,
 		maxTokens:  cfg.MaxTokens,
 	}
 }
@@ -104,11 +118,14 @@ type Request struct {
 	MaxTokens int
 }
 
-// Block is the composed pre-warm payload.
+// Block is the composed pre-warm payload. Surfaced lists the observation
+// and skill IDs that made it into Text after token budgeting — sections
+// dropped by the budget do not count as surfaced.
 type Block struct {
 	Text          string
 	TokenEstimate int
 	Sections      []Section
+	Surfaced      []injection.Ref
 	SafetyReport  safety.Report
 }
 
@@ -171,6 +188,7 @@ func (s *Service) Build(ctx context.Context, req Request) (*Block, error) {
 				fullText.WriteString("\n\n")
 				used += estimateTokens(trimmed)
 				block.Sections = append(block.Sections, Section{Title: d.title, Body: body})
+				block.Surfaced = append(block.Surfaced, d.refs...)
 			}
 			break
 		}
@@ -178,10 +196,21 @@ func (s *Service) Build(ctx context.Context, req Request) (*Block, error) {
 		fullText.WriteString("\n\n")
 		used += cost
 		block.Sections = append(block.Sections, Section{Title: d.title, Body: body})
+		block.Surfaced = append(block.Surfaced, d.refs...)
 	}
 
 	block.Text = strings.TrimRight(fullText.String(), "\n")
 	block.TokenEstimate = used
+
+	// Fire-and-forget: the surfacing log is measurement, and measurement
+	// must never break the surface being measured.
+	if s.injections != nil && len(block.Surfaced) > 0 {
+		channel := injection.ChannelPrewarm
+		if req.Mode == ModeCompactionRecovery {
+			channel = injection.ChannelRecovery
+		}
+		_ = s.injections.Log(ctx, channel, req.AgentID, req.Project, req.SessionID, block.Surfaced)
+	}
 	return block, nil
 }
 
@@ -190,6 +219,10 @@ func (s *Service) Build(ctx context.Context, req Request) (*Block, error) {
 type sectionDraft struct {
 	title string
 	body  string
+	// refs lists the observation/skill IDs rendered into body, so Build
+	// can record exactly what was surfaced (and only if the section
+	// survives token budgeting).
+	refs []injection.Ref
 }
 
 type stepFunc func(ctx context.Context, s *Service, req Request) (sectionDraft, error)
@@ -257,6 +290,7 @@ func stepConventions(ctx context.Context, s *Service, req Request) (sectionDraft
 		return sectionDraft{title: "conventions"}, nil
 	}
 	var b strings.Builder
+	var refs []injection.Ref
 	for _, o := range list {
 		b.WriteString("- ")
 		b.WriteString(o.Title)
@@ -265,8 +299,9 @@ func stepConventions(ctx context.Context, s *Service, req Request) (sectionDraft
 			b.WriteString(oneLine(o.Rationale))
 		}
 		b.WriteString("\n")
+		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: o.ID})
 	}
-	return sectionDraft{title: "conventions", body: strings.TrimRight(b.String(), "\n")}, nil
+	return sectionDraft{title: "conventions", body: strings.TrimRight(b.String(), "\n"), refs: refs}, nil
 }
 
 func stepRecentSessions(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
@@ -327,7 +362,9 @@ func stepMatchingSkills(ctx context.Context, s *Service, req Request) (sectionDr
 		return sectionDraft{title: "applicable skills"}, nil
 	}
 	var b strings.Builder
+	var refs []injection.Ref
 	for _, m := range matches {
+		refs = append(refs, injection.Ref{Kind: injection.KindSkill, ID: m.Skill.ID})
 		b.WriteString("- ")
 		b.WriteString(m.Skill.Name)
 		b.WriteString(": ")
@@ -343,7 +380,7 @@ func stepMatchingSkills(ctx context.Context, s *Service, req Request) (sectionDr
 		}
 		b.WriteString("\n")
 	}
-	return sectionDraft{title: "applicable skills", body: strings.TrimRight(b.String(), "\n")}, nil
+	return sectionDraft{title: "applicable skills", body: strings.TrimRight(b.String(), "\n"), refs: refs}, nil
 }
 
 func stepCorrections(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
@@ -368,6 +405,7 @@ func stepCorrections(ctx context.Context, s *Service, req Request) (sectionDraft
 		return sectionDraft{title: "relevant corrections"}, nil
 	}
 	var b strings.Builder
+	var refs []injection.Ref
 	for i, r := range results {
 		if i >= 3 {
 			break
@@ -377,8 +415,9 @@ func stepCorrections(ctx context.Context, s *Service, req Request) (sectionDraft
 		b.WriteString(": ")
 		b.WriteString(oneLine(r.Observation.Content))
 		b.WriteString("\n")
+		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: r.Observation.ID})
 	}
-	return sectionDraft{title: "relevant corrections", body: strings.TrimRight(b.String(), "\n")}, nil
+	return sectionDraft{title: "relevant corrections", body: strings.TrimRight(b.String(), "\n"), refs: refs}, nil
 }
 
 func stepHotFiles(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
@@ -427,6 +466,7 @@ func stepInSessionObservations(ctx context.Context, s *Service, req Request) (se
 		return sectionDraft{title: "session observations"}, err
 	}
 	var b strings.Builder
+	var refs []injection.Ref
 	n := 0
 	for _, o := range all {
 		if o.SessionID != req.SessionID {
@@ -436,12 +476,13 @@ func stepInSessionObservations(ctx context.Context, s *Service, req Request) (se
 			break
 		}
 		fmt.Fprintf(&b, "- [%s] %s\n", o.Type, o.Title)
+		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: o.ID})
 		n++
 	}
 	if n == 0 {
 		return sectionDraft{title: "session observations"}, nil
 	}
-	return sectionDraft{title: "session observations", body: strings.TrimRight(b.String(), "\n")}, nil
+	return sectionDraft{title: "session observations", body: strings.TrimRight(b.String(), "\n"), refs: refs}, nil
 }
 
 // --- helpers ------------------------------------------------------------

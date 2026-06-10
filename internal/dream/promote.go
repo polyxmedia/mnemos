@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
 
@@ -28,6 +31,12 @@ const (
 	// a one-off. Three is the smallest N where the mean is robust to noise
 	// — two is a coincidence, three is a trend.
 	minCorrectionsPerGroup = 3
+
+	// overwhelmingGroupSize is the cluster size at which frequency alone
+	// overrides the outcome gate. Five corrections on the same topic is
+	// no longer plausibly a burst of duplicate saves — by then waiting for
+	// outcome evidence just delays a skill the store obviously needs.
+	overwhelmingGroupSize = 5
 
 	// tagPromoted marks skills produced by this pipeline. Makes them easy
 	// to filter (`mnemos skill list --promoted`) and recognise in stats.
@@ -54,16 +63,21 @@ const (
 // agent_id|project|label, truncated). Promotion writes that hash as a
 // skill tag `promoted-origin:<hash>`. A later pass finds the existing skill
 // by tag and upserts — version bumps, source_sessions extend, no dupes.
-func (s *Service) promoteSkillsFromCorrections(ctx context.Context) (int, error) {
+// Admission: a cluster that clears the frequency floor must additionally
+// pass the outcome gate (see promotionGate) before its FIRST promotion —
+// frequency alone is weak evidence that a skill would change behavior.
+// Version bumps of an already-admitted skill skip the gate: updating an
+// existing skill with new corrections is maintenance, not admission.
+func (s *Service) promoteSkillsFromCorrections(ctx context.Context) (promoted, deferred int, err error) {
 	if s.skills == nil || s.reader == nil {
-		return 0, nil
+		return 0, 0, nil
 	}
 	// A single bulk fetch; corrections are rarer than generic observations
 	// so the limit is forgiving. If a user ever exceeds it in practice we
 	// can add pagination, but 10k in-memory is cheap.
 	corrections, err := s.reader.ListByProject(ctx, "", "", memory.TypeCorrection, 10000)
 	if err != nil {
-		return 0, fmt.Errorf("list corrections: %w", err)
+		return 0, 0, fmt.Errorf("list corrections: %w", err)
 	}
 	// Quarantine guard: promotion elevates corrections into a trusted,
 	// surfaced skill, so raw-tier corrections must never feed it. Raw is
@@ -81,21 +95,152 @@ func (s *Service) promoteSkillsFromCorrections(ctx context.Context) (int, error)
 	}
 	groups := groupCorrections(eligible)
 
-	n := 0
 	for _, g := range groups {
 		if len(g.corrections) < minCorrectionsPerGroup {
 			continue
 		}
-		ok, err := s.upsertPromotedSkill(ctx, g)
+		existing, err := s.findSkillByOrigin(ctx, g.agentID, g.hash)
+		if err != nil {
+			s.log.Warn("promote skill", "err", err, "label", g.label, "project", g.project)
+			continue
+		}
+		if existing == nil {
+			gate := s.promotionGate(ctx, g)
+			if !gate.promote {
+				deferred++
+				s.log.Info("skill promotion deferred",
+					"label", g.label, "project", g.project,
+					"corrections", len(g.corrections), "reason", gate.reason)
+				continue
+			}
+			s.log.Info("skill promotion admitted",
+				"label", g.label, "project", g.project, "reason", gate.reason)
+		}
+		ok, err := s.upsertPromotedSkill(ctx, g, existing)
 		if err != nil {
 			s.log.Warn("promote skill", "err", err, "label", g.label, "project", g.project)
 			continue
 		}
 		if ok {
-			n++
+			promoted++
 		}
 	}
-	return n, nil
+	return promoted, deferred, nil
+}
+
+// gateResult is the explainable outcome of the promotion gate: admit or
+// defer, plus the human-readable reason that lands in the dream log. The
+// reason is the point — "why was this skill created" must be answerable
+// from the log, the same way Bet 2 made "why was this stored" answerable.
+type gateResult struct {
+	promote bool
+	reason  string
+}
+
+// promotionGate decides whether a correction cluster has earned its first
+// promotion. Frequency thresholds alone admit skills that never change
+// behavior (the Skill-Pro finding: outcome-verified admission beats
+// frequency-style baselines by an order of magnitude on reuse), so beyond
+// the count floor the cluster must show recurrence spread plus one piece
+// of outcome evidence:
+//
+//   - it recurred AFTER being surfaced into context (the injection log
+//     proves passive memory alone is not preventing the mistake), or
+//   - a correction was born in a failed/blocked session (the mistake had
+//     real cost), or
+//   - the cluster hit overwhelmingGroupSize (frequency so high the gate
+//     would only delay the inevitable).
+//
+// When neither outcome store is wired (embedded users constructing the
+// dream service without Sessions/Injections), the gate falls back to
+// legacy frequency-only admission rather than silently never promoting.
+func (s *Service) promotionGate(ctx context.Context, g correctionGroup) gateResult {
+	if s.injections == nil && s.sessions == nil {
+		return gateResult{true, "outcome stores not wired; legacy frequency-only admission"}
+	}
+
+	// Recurrence spread: the same mistake across sessions (or, when
+	// session stamps are missing, across days). A burst of saves inside
+	// one sitting is one incident recorded three times, not a trend.
+	sessionSet := map[string]bool{}
+	daySet := map[string]bool{}
+	for _, o := range g.corrections {
+		if o.SessionID != "" {
+			sessionSet[o.SessionID] = true
+		}
+		daySet[o.CreatedAt.UTC().Format("2006-01-02")] = true
+	}
+	if len(sessionSet) < 2 && len(daySet) < 2 {
+		return gateResult{false, "all corrections from a single session/day burst; recurrence across sessions not yet shown"}
+	}
+
+	if len(g.corrections) >= overwhelmingGroupSize {
+		return gateResult{true, fmt.Sprintf("%d corrections is overwhelming frequency evidence", len(g.corrections))}
+	}
+
+	if s.injections != nil {
+		if ok, detail := s.recurredAfterSurfacing(ctx, g); ok {
+			return gateResult{true, detail}
+		}
+	}
+	if s.sessions != nil {
+		if ok, detail := s.bornFromFailedSession(ctx, g); ok {
+			return gateResult{true, detail}
+		}
+	}
+	return gateResult{false, "no outcome evidence yet: never recurred after being surfaced, no failed-session origin, below overwhelming frequency"}
+}
+
+// recurredAfterSurfacing reports whether any correction in the cluster was
+// saved after an earlier cluster member had already been surfaced into
+// agent context. That sequence is the cheap counterfactual: the
+// observation arm already ran and lost, so a stronger intervention (a
+// skill) is warranted. Best-effort — injection log read failures just
+// withhold this signal.
+func (s *Service) recurredAfterSurfacing(ctx context.Context, g correctionGroup) (bool, string) {
+	var earliest time.Time
+	for _, o := range g.corrections {
+		events, err := s.injections.ListByRef(ctx, injection.KindObservation, o.ID, 50)
+		if err != nil {
+			continue
+		}
+		for _, e := range events {
+			if earliest.IsZero() || e.CreatedAt.Before(earliest) {
+				earliest = e.CreatedAt
+			}
+		}
+	}
+	if earliest.IsZero() {
+		return false, ""
+	}
+	for _, o := range g.corrections {
+		if o.CreatedAt.After(earliest) {
+			return true, fmt.Sprintf(
+				"correction recurred at %s after the cluster was first surfaced at %s — passive memory is not preventing the mistake",
+				o.CreatedAt.UTC().Format(time.RFC3339), earliest.UTC().Format(time.RFC3339))
+		}
+	}
+	return false, ""
+}
+
+// bornFromFailedSession reports whether any correction in the cluster came
+// from a session that ended failed or blocked. Corrections born from
+// failure carry demonstrated cost, which is outcome evidence in a way that
+// an ok-session save is not. Best-effort on session lookups.
+func (s *Service) bornFromFailedSession(ctx context.Context, g correctionGroup) (bool, string) {
+	for _, o := range g.corrections {
+		if o.SessionID == "" {
+			continue
+		}
+		sess, err := s.sessions.Get(ctx, o.SessionID)
+		if err != nil || sess == nil {
+			continue
+		}
+		if sess.Status == session.StatusFailed || sess.Status == session.StatusBlocked {
+			return true, fmt.Sprintf("correction %q came from a %s session — the mistake had demonstrated cost", o.Title, sess.Status)
+		}
+	}
+	return false, ""
 }
 
 // correctionGroup is an in-memory cluster of correction observations that
@@ -186,15 +331,12 @@ func defaultAgent(id string) string {
 }
 
 // upsertPromotedSkill synthesises or version-bumps a skill for the given
-// group. Returns true when the skill was created or updated (version went
-// up), false when the existing skill already matched exactly.
-func (s *Service) upsertPromotedSkill(ctx context.Context, g correctionGroup) (bool, error) {
+// group. existing is the prior skill for this group's origin hash (nil on
+// first promotion); the caller already fetched it for the admission gate.
+// Returns true when the skill was created or updated (version went up),
+// false when the existing skill already matched exactly.
+func (s *Service) upsertPromotedSkill(ctx context.Context, g correctionGroup, existing *skills.Skill) (bool, error) {
 	procedure, pitfalls := synthesisePromotion(g)
-
-	existing, err := s.findSkillByOrigin(ctx, g.agentID, g.hash)
-	if err != nil {
-		return false, err
-	}
 
 	sources := sessionIDs(g.corrections)
 	description := fmt.Sprintf("Auto-promoted from %d corrections in %s: %s",
@@ -220,7 +362,7 @@ func (s *Service) upsertPromotedSkill(ctx context.Context, g correctionGroup) (b
 		name = existing.Name
 	}
 
-	_, err = s.skills.Save(ctx, skills.SaveInput{
+	_, err := s.skills.Save(ctx, skills.SaveInput{
 		AgentID:        g.agentID,
 		Name:           name,
 		Description:    description,

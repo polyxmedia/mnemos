@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
+
+	"github.com/polyxmedia/mnemos/internal/injection"
 )
 
 // Embedder is the minimal interface memory.Service needs from an embedding
@@ -21,16 +23,25 @@ type Embedder interface {
 	Model() string
 }
 
+// InjectionRecorder is the narrow surface the memory service needs from
+// the injection log: one batched write per Context block. Declared at the
+// consumer so tests can capture surfacings with a small fake. Log is
+// fire-and-forget — a failed measurement write never fails the Context call.
+type InjectionRecorder interface {
+	Log(ctx context.Context, channel injection.Channel, agentID, project, sessionID string, refs []injection.Ref) error
+}
+
 // Service is the agent-facing API over observations. It owns ID assignment,
 // timestamp defaults, ranking, supersession, and token-budgeted context
 // packing. Transports (MCP, HTTP, CLI) call Service methods, never the Store
 // directly.
 type Service struct {
-	store    Store
-	ranker   *Ranker
-	hybrid   HybridParams
-	embedder Embedder
-	clock    func() time.Time
+	store      Store
+	ranker     *Ranker
+	hybrid     HybridParams
+	embedder   Embedder
+	injections InjectionRecorder
+	clock      func() time.Time
 }
 
 // Config bundles injected dependencies for the memory service.
@@ -39,6 +50,9 @@ type Config struct {
 	RankParams RankParams
 	Hybrid     HybridParams
 	Embedder   Embedder
+	// Injections is optional; when nil, Context blocks are not recorded
+	// in the injection-event log.
+	Injections InjectionRecorder
 	Clock      func() time.Time
 	AgentID    string
 }
@@ -57,11 +71,12 @@ func NewService(cfg Config) *Service {
 		hybrid = DefaultHybridParams()
 	}
 	return &Service{
-		store:    cfg.Store,
-		ranker:   NewRanker(params),
-		hybrid:   hybrid,
-		embedder: cfg.Embedder,
-		clock:    cfg.Clock,
+		store:      cfg.Store,
+		ranker:     NewRanker(params),
+		hybrid:     hybrid,
+		embedder:   cfg.Embedder,
+		injections: cfg.Injections,
+		clock:      cfg.Clock,
 	}
 }
 
@@ -407,6 +422,16 @@ func (s *Service) Context(ctx context.Context, in ContextInput) (*ContextBlock, 
 	}
 	block.Text = strings.TrimRight(sb.String(), "\n")
 	block.TokenEstimate = maxTokens - budget
+
+	// Fire-and-forget: the surfacing log is measurement, and measurement
+	// must never break the surface being measured.
+	if s.injections != nil && len(block.Observations) > 0 {
+		refs := make([]injection.Ref, 0, len(block.Observations))
+		for _, o := range block.Observations {
+			refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: o.ID})
+		}
+		_ = s.injections.Log(ctx, injection.ChannelContext, in.AgentID, in.Project, "", refs)
+	}
 	return block, nil
 }
 

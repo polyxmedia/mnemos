@@ -9,6 +9,7 @@ import (
 
 	"github.com/polyxmedia/mnemos/internal/api"
 	"github.com/polyxmedia/mnemos/internal/config"
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
@@ -49,9 +50,11 @@ func runServe(ctx context.Context, args []string) error {
 	embedder := selectEmbedder(ctx, cfg.Embedding)
 	logger.Info("embedding", "provider", embedder.Model(), "dim", embedder.Dimension())
 
+	injLog := injection.NewLogger(db.Injections(), nil)
 	mem := memory.NewService(memory.Config{
-		Store:    db.Observations(),
-		Embedder: embedder,
+		Store:      db.Observations(),
+		Embedder:   embedder,
+		Injections: injLog,
 		RankParams: memory.RankParams{
 			DecayRate:        cfg.Search.DecayRate,
 			ImportanceWeight: 0.5,
@@ -68,6 +71,7 @@ func runServe(ctx context.Context, args []string) error {
 		Skills:       db.Skills(),
 		Touches:      db.Touches(),
 		Rumination:   rum,
+		Injections:   injLog,
 		MaxTokens:    500,
 	})
 

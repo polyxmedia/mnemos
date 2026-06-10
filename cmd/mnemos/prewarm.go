@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/session"
 )
@@ -87,11 +89,14 @@ func runPrewarm(ctx context.Context, args []string) error {
 		Skills:       d.db.Skills(),
 		Touches:      d.db.Touches(),
 		Rumination:   d.rum,
+		Injections:   injection.NewLogger(d.db.Injections(), nil),
 	})
 
 	var sessID string
 	if *openSession && pwMode == prewarm.ModeSessionStart {
-		if sess, err := d.sess.Open(ctx, session.OpenInput{
+		if sess := adoptableOpenSession(ctx, d, proj); sess != nil {
+			sessID = sess.ID
+		} else if sess, err := d.sess.Open(ctx, session.OpenInput{
 			Project: proj, Goal: *goal,
 		}); err == nil {
 			sessID = sess.ID
@@ -138,6 +143,33 @@ func runPrewarm(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+// sessionAdoptWindow bounds how recently an open session must have started
+// for a new SessionStart firing to adopt it instead of opening a twin.
+// SessionStart hooks installed at both user and project scope both fire
+// within milliseconds of each other; before this guard every Claude
+// session on such a setup left a duplicate mnemos session that never
+// closed. The window is deliberately short so a genuinely new session an
+// hour later still gets its own row.
+const sessionAdoptWindow = 90 * time.Second
+
+// adoptableOpenSession returns the newest open session for the project if
+// it started within sessionAdoptWindow, else nil. Best-effort: lookup
+// failures mean "open a fresh one".
+func adoptableOpenSession(ctx context.Context, d *deps, project string) *session.Session {
+	if project == "" {
+		return nil
+	}
+	open, err := d.sess.ListOpen(ctx, project)
+	if err != nil || len(open) == 0 {
+		return nil
+	}
+	newest := open[0]
+	if time.Since(newest.StartedAt) > sessionAdoptWindow {
+		return nil
+	}
+	return &newest
 }
 
 func parsePrewarmMode(s string) (prewarm.Mode, error) {

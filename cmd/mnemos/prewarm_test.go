@@ -158,3 +158,85 @@ func TestRunPrewarmCompactionRecoveryMode(t *testing.T) {
 		t.Errorf("compaction_recovery should not open a new session when none exists: %q", out)
 	}
 }
+
+func TestRunPrewarmAdoptsRecentOpenSession(t *testing.T) {
+	homeWithConfig(t, "")
+	ctx := context.Background()
+
+	// SessionStart hooks installed at user AND project scope both fire
+	// within milliseconds. The second firing must adopt the session the
+	// first one opened, not create a twin that never gets closed.
+	first := captureStdout(t, func() {
+		if err := runPrewarm(ctx, []string{"--project", "mnemos"}); err != nil {
+			t.Fatalf("first prewarm: %v", err)
+		}
+	})
+	second := captureStdout(t, func() {
+		if err := runPrewarm(ctx, []string{"--project", "mnemos"}); err != nil {
+			t.Fatalf("second prewarm: %v", err)
+		}
+	})
+
+	firstID := sessionIDFromOutput(t, first)
+	secondID := sessionIDFromOutput(t, second)
+	if firstID != secondID {
+		t.Errorf("second firing must adopt the open session: %s != %s", firstID, secondID)
+	}
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	defer d.close()
+	open, err := d.sess.ListOpen(ctx, "mnemos")
+	if err != nil {
+		t.Fatalf("list open: %v", err)
+	}
+	if len(open) != 1 {
+		t.Errorf("want exactly 1 open session after double firing, got %d", len(open))
+	}
+}
+
+func TestRunPrewarmDoesNotAdoptAcrossProjects(t *testing.T) {
+	homeWithConfig(t, "")
+	ctx := context.Background()
+
+	captureStdout(t, func() {
+		if err := runPrewarm(ctx, []string{"--project", "alpha"}); err != nil {
+			t.Fatalf("prewarm alpha: %v", err)
+		}
+	})
+	captureStdout(t, func() {
+		if err := runPrewarm(ctx, []string{"--project", "beta"}); err != nil {
+			t.Fatalf("prewarm beta: %v", err)
+		}
+	})
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		t.Fatalf("loadDeps: %v", err)
+	}
+	defer d.close()
+	for _, proj := range []string{"alpha", "beta"} {
+		open, err := d.sess.ListOpen(ctx, proj)
+		if err != nil {
+			t.Fatalf("list open %s: %v", proj, err)
+		}
+		if len(open) != 1 {
+			t.Errorf("project %s: want its own session, got %d", proj, len(open))
+		}
+	}
+}
+
+// sessionIDFromOutput extracts the mnemos_session_id line from prewarm
+// text output.
+func sessionIDFromOutput(t *testing.T, out string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "mnemos_session_id: ") {
+			return strings.TrimPrefix(line, "mnemos_session_id: ")
+		}
+	}
+	t.Fatalf("no mnemos_session_id in output: %q", out)
+	return ""
+}

@@ -135,6 +135,32 @@ func (s *sessStore) SetGoalIfEmpty(ctx context.Context, id, goal string) error {
 	return nil
 }
 
+func (s *sessStore) ListOpen(ctx context.Context, project string) ([]session.Session, error) {
+	query := `SELECT ` + sessColumns + ` FROM sessions WHERE ended_at IS NULL`
+	args := []any{}
+	if project != "" {
+		query += ` AND project = ?`
+		args = append(args, project)
+	}
+	query += ` ORDER BY started_at DESC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list open: %w", err)
+	}
+	defer rows.Close()
+
+	var out []session.Session
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *sess)
+	}
+	return out, rows.Err()
+}
+
 func (s *sessStore) Current(ctx context.Context, agentID string) (*session.Session, error) {
 	args := []any{}
 	query := `SELECT ` + sessColumns + ` FROM sessions WHERE ended_at IS NULL`

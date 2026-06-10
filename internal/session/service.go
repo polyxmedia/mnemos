@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -76,6 +77,40 @@ func (s *Service) Recent(ctx context.Context, agentID string, limit int) ([]Sess
 // for an agent, or ErrNotFound if none is open.
 func (s *Service) Current(ctx context.Context, agentID string) (*Session, error) {
 	return s.store.Current(ctx, agentID)
+}
+
+// ListOpen returns all open sessions, newest first, optionally scoped to
+// a project (empty means all projects).
+func (s *Service) ListOpen(ctx context.Context, project string) ([]Session, error) {
+	return s.store.ListOpen(ctx, project)
+}
+
+// CloseAllOpen closes every open session for a project with the same
+// summary/status/tags and returns how many it closed. in.ID is ignored.
+// SessionStart hooks installed at both user and project scope each open a
+// session, so SessionEnd must close the set, not just the newest — closing
+// one and leaving its twin open is how the store accumulated hundreds of
+// never-ended sessions.
+func (s *Service) CloseAllOpen(ctx context.Context, project string, in CloseInput) (int, error) {
+	open, err := s.store.ListOpen(ctx, project)
+	if err != nil {
+		return 0, err
+	}
+	closed := 0
+	for _, sess := range open {
+		ci := in
+		ci.ID = sess.ID
+		if err := s.store.Close(ctx, ci); err != nil {
+			// A concurrent close (the agent calling mnemos_session_end in
+			// parallel) is not a failure of this sweep.
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			return closed, err
+		}
+		closed++
+	}
+	return closed, nil
 }
 
 // SetGoalIfEmpty backfills the goal on a still-open session that has none.

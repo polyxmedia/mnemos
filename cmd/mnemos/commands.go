@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/polyxmedia/mnemos/internal/config"
+	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/installer"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/rumination"
@@ -42,8 +43,11 @@ func loadDeps(ctx context.Context) (*deps, error) {
 	}
 	skl := skills.NewService(skills.Config{Store: db.Skills()})
 	return &deps{
-		db:   db,
-		mem:  memory.NewService(memory.Config{Store: db.Observations()}),
+		db: db,
+		mem: memory.NewService(memory.Config{
+			Store:      db.Observations(),
+			Injections: injection.NewLogger(db.Injections(), nil),
+		}),
 		sess: session.NewService(session.Config{Store: db.Sessions()}),
 		skl:  skl,
 		rum:  newRumination(cfg, db, skl),
