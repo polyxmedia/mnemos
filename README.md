@@ -185,7 +185,7 @@ args    = ["serve"]
 
 ### Any MCP-compatible client
 
-Stdio: point the client at `mnemos serve`. The server advertises 16 tools and 3 resources on the `initialize` handshake (20 tools when rumination is enabled).
+Stdio: point the client at `mnemos serve`. The server advertises 17 tools and 3 resources on the `initialize` handshake (21 tools when rumination is enabled).
 
 ### HTTP transport
 
@@ -222,7 +222,7 @@ Use `pkg/client` from Go or call `POST /v1/observations` directly. Reference: [d
 
 ## MCP tools
 
-`mnemos_save` `mnemos_search` `mnemos_get` `mnemos_delete` `mnemos_link` `mnemos_session_start` `mnemos_session_end` `mnemos_context` `mnemos_promote` `mnemos_correct` `mnemos_convention` `mnemos_touch` `mnemos_skill_match` `mnemos_skill_save` `mnemos_skill_score` `mnemos_stats`
+`mnemos_save` `mnemos_search` `mnemos_get` `mnemos_delete` `mnemos_link` `mnemos_session_start` `mnemos_session_end` `mnemos_context` `mnemos_premortem` `mnemos_promote` `mnemos_correct` `mnemos_convention` `mnemos_touch` `mnemos_skill_match` `mnemos_skill_save` `mnemos_skill_score` `mnemos_stats`
 
 With `[rumination].enabled = true`: `mnemos_ruminate_list` `mnemos_ruminate_pack` `mnemos_ruminate_resolve` `mnemos_ruminate_dismiss`
 

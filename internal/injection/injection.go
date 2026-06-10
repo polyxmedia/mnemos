@@ -27,6 +27,17 @@ const (
 	KindSkill       Kind = "skill"
 )
 
+// Valid reports whether k is a recognised kind. Enforced at the storage
+// layer on write — the schema deliberately carries no CHECK (migration
+// 0005) so new kinds are a code change, not a table rebuild.
+func (k Kind) Valid() bool {
+	switch k {
+	case KindObservation, KindSkill:
+		return true
+	}
+	return false
+}
+
 // Channel names the surface a memory was injected through.
 type Channel string
 
@@ -39,7 +50,24 @@ const (
 	ChannelContext Channel = "context"
 	// ChannelPromptHook: the UserPromptSubmit hook's auto-search block.
 	ChannelPromptHook Channel = "prompt_hook"
+	// ChannelPreTool: just-in-time memory fed into PreToolUse on file
+	// edits — corrections/conventions relevant to the file being written.
+	ChannelPreTool Channel = "pre_tool"
+	// ChannelPremortem: the mnemos_premortem tool — failure-relevant
+	// memory matched against a proposed plan before execution.
+	ChannelPremortem Channel = "premortem"
 )
+
+// Valid reports whether c is a recognised channel. Same contract as
+// Kind.Valid: Go-side enum enforcement instead of a schema CHECK.
+func (c Channel) Valid() bool {
+	switch c {
+	case ChannelPrewarm, ChannelRecovery, ChannelContext,
+		ChannelPromptHook, ChannelPreTool, ChannelPremortem:
+		return true
+	}
+	return false
+}
 
 // Ref names one surfaced memory: the kind plus its store ID.
 type Ref struct {

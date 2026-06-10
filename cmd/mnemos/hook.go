@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -494,26 +495,163 @@ func sanitizeReason(r string) string {
 	return r
 }
 
-// runHookPreTool handles Claude Code's PreToolUse event for mnemos write
-// tools. Runs the safety scanner over the tool_input payload; if an
-// elevated-risk prompt-injection pattern is detected, exits 2 with a
-// stderr message that Claude Code feeds back into the model's context.
-// Claude receives a specific reason to revise and the save never lands.
+// runHookPreTool handles Claude Code's PreToolUse event. Two surfaces in
+// one subcommand, dispatched on tool_name:
 //
-// This is mnemos defending its own writes — a slice of Bet 2's quarantined
-// tool-output tier, shipping at the hook layer well before the full
-// provenance work. Pattern composes: future PreToolUse hooks (correction-
-// collision on Edit, git-commit attribution, etc.) slot into the same
-// subcommand, same exit-code contract.
+//  1. Guardrail on mnemos write tools: runs the safety scanner over the
+//     tool_input payload; an elevated-risk prompt-injection pattern exits
+//     2 with stderr fed back to the model, and the save never lands.
+//  2. Just-in-time memory on file-edit tools: searches corrections and
+//     conventions relevant to the file about to be written and returns
+//     them as PreToolUse additionalContext — the memory arrives at the
+//     decision point, not 40 turns earlier in the session-start block.
 func runHookPreTool(ctx context.Context, _ []string) error {
-	_ = ctx
-	msg, block := decidePreTool(readHookStdin(os.Stdin))
-	if !block {
-		return nil
+	in := readHookStdin(os.Stdin)
+	msg, block := decidePreTool(in)
+	if block {
+		fmt.Fprintln(os.Stderr, msg)
+		os.Exit(2)
 	}
-	fmt.Fprintln(os.Stderr, msg)
-	os.Exit(2)
+	if isFileEditTool(in.ToolName) {
+		emitPreToolMemory(ctx, os.Stdout, in)
+	}
 	return nil
+}
+
+// preToolMemoryMaxHits caps how many memories ride along on one edit.
+// Same rationale as the prompt hook's cap: invisible on routine edits,
+// enough to carry the correction + convention cluster around a file.
+const preToolMemoryMaxHits = 3
+
+// emitPreToolMemory searches the store for corrections and conventions
+// relevant to the file a PreToolUse(Edit|Write) event is about to touch
+// and emits them as hookSpecificOutput.additionalContext JSON on stdout.
+// No permissionDecision is ever emitted — this surface must never
+// auto-approve or block a write, only inform it. Memories already
+// surfaced in the current session (any channel, read from the injection
+// log) are skipped, so repeated edits to the same file don't spam the
+// context with the same warning. Best-effort: every failure path emits
+// nothing.
+func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
+	path := filePathFromToolInput(in.ToolInput)
+	if path == "" {
+		return
+	}
+	query := pathQueryTokens(path)
+	if query == "" {
+		return
+	}
+
+	d, err := loadDeps(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook pre-tool:", err)
+		return
+	}
+	defer d.close()
+
+	hits, err := d.mem.Search(ctx, memory.SearchInput{
+		Query:   query,
+		Project: projectFromHook(in),
+		Limit:   preToolMemoryMaxHits * 2,
+	})
+	if err != nil || len(hits) == 0 {
+		return
+	}
+
+	var sessID, agentID string
+	if sess, err := d.sess.Current(ctx, ""); err == nil && sess != nil {
+		sessID, agentID = sess.ID, sess.AgentID
+	}
+
+	injStore := d.db.Injections()
+	var kept []memory.SearchResult
+	for _, h := range hits {
+		if h.Observation.Type != memory.TypeCorrection && h.Observation.Type != memory.TypeConvention {
+			continue
+		}
+		if h.Score < promptMemoryMinScore {
+			continue
+		}
+		if alreadyInjectedInSession(ctx, injStore, h.Observation.ID, sessID) {
+			continue
+		}
+		kept = append(kept, h)
+		if len(kept) >= preToolMemoryMaxHits {
+			break
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[mnemos: memory relevant to %s — apply before editing]\n", filepath.Base(path))
+	refs := make([]injection.Ref, 0, len(kept))
+	for _, h := range kept {
+		snippet := strings.TrimSpace(h.Snippet)
+		if snippet == "" {
+			snippet = strings.TrimSpace(h.Observation.Content)
+		}
+		if len(snippet) > 240 {
+			snippet = snippet[:237] + "…"
+		}
+		fmt.Fprintf(&b, "- [%s] %s — %s\n", h.Observation.Type, h.Observation.Title, snippet)
+		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: h.Observation.ID})
+	}
+
+	out := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "PreToolUse",
+			"additionalContext": strings.TrimRight(b.String(), "\n"),
+		},
+	}
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		return
+	}
+	_ = injection.NewLogger(injStore, nil).
+		Log(ctx, injection.ChannelPreTool, agentID, projectFromHook(in), sessID, refs)
+}
+
+// pathQueryTokens turns a file path into a search query: the last few
+// path segments split on separators, lowercased. "/Users/x/repo/internal/
+// storage/sessions.go" → "internal storage sessions go". The FTS layer
+// ORs the tokens, so any segment matching a correction's trigger context
+// or content surfaces it.
+func pathQueryTokens(p string) string {
+	segs := strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(segs) > 4 {
+		segs = segs[len(segs)-4:]
+	}
+	var toks []string
+	for _, s := range segs {
+		for _, t := range strings.FieldsFunc(s, func(r rune) bool {
+			return r == '.' || r == '_' || r == '-'
+		}) {
+			if len(t) > 1 {
+				toks = append(toks, strings.ToLower(t))
+			}
+		}
+	}
+	return strings.Join(toks, " ")
+}
+
+// alreadyInjectedInSession reports whether the observation was surfaced
+// into the given session through any channel. Used as a spam guard:
+// repeated edits to the same file should not re-inject the same memory.
+func alreadyInjectedInSession(ctx context.Context, store injection.Store, refID, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	events, err := store.ListByRef(ctx, injection.KindObservation, refID, 50)
+	if err != nil {
+		return false
+	}
+	for _, e := range events {
+		if e.SessionID == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 // decidePreTool is the pure-function core of the PreToolUse guardrail.

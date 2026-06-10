@@ -392,6 +392,15 @@ func runInit(_ context.Context, _ []string) error {
 				},
 			},
 			{
+				label: "Claude Code PreToolUse just-in-time memory",
+				entry: installer.HookEntry{
+					Event:   "PreToolUse",
+					Matcher: "Edit|Write|MultiEdit|NotebookEdit",
+					Command: fmt.Sprintf("%s hook pre-tool", selfPath),
+					Timeout: 5,
+				},
+			},
+			{
 				label: "Claude Code PreCompact hook",
 				entry: installer.HookEntry{
 					Event:   "PreCompact",

@@ -34,6 +34,15 @@ func (s *injStore) Record(ctx context.Context, events []injection.Event) error {
 	defer stmt.Close()
 
 	for _, e := range events {
+		// Enum validation lives here, not in a schema CHECK (see migration
+		// 0005): the write fails loudly on a typo'd kind/channel while new
+		// values stay a one-line Go change.
+		if !e.Kind.Valid() {
+			return fmt.Errorf("record injection: invalid kind %q", e.Kind)
+		}
+		if !e.Channel.Valid() {
+			return fmt.Errorf("record injection: invalid channel %q", e.Channel)
+		}
 		if _, err := stmt.ExecContext(ctx,
 			e.ID,
 			string(e.Kind),

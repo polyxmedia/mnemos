@@ -181,18 +181,33 @@ func TestRunInitWiresPreToolGuardrailForClaudeCode(t *testing.T) {
 	_ = json.Unmarshal(data, &cfg)
 	hooks := cfg["hooks"].(map[string]any)
 	groups, ok := hooks["PreToolUse"].([]any)
-	if !ok || len(groups) != 1 {
-		t.Fatalf("expected one PreToolUse group, got %v", groups)
+	// Two PreToolUse surfaces share the subcommand: the write-tool
+	// guardrail and just-in-time memory injection on file edits.
+	if !ok || len(groups) != 2 {
+		t.Fatalf("expected two PreToolUse groups, got %v", groups)
 	}
-	group := groups[0].(map[string]any)
-	want := "mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention"
-	if group["matcher"] != want {
-		t.Errorf("unexpected PreToolUse matcher: %v", group["matcher"])
+	wantMatchers := map[string]bool{
+		"mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention": false,
+		"Edit|Write|MultiEdit|NotebookEdit":                                                   false,
 	}
-	inner := group["hooks"].([]any)
-	cmd := inner[0].(map[string]any)["command"].(string)
-	if !strings.HasSuffix(cmd, "hook pre-tool") {
-		t.Errorf("PreToolUse command should end with 'hook pre-tool', got %q", cmd)
+	for _, g := range groups {
+		group := g.(map[string]any)
+		matcher, _ := group["matcher"].(string)
+		if _, expected := wantMatchers[matcher]; !expected {
+			t.Errorf("unexpected PreToolUse matcher: %v", matcher)
+			continue
+		}
+		wantMatchers[matcher] = true
+		inner := group["hooks"].([]any)
+		cmd := inner[0].(map[string]any)["command"].(string)
+		if !strings.HasSuffix(cmd, "hook pre-tool") {
+			t.Errorf("PreToolUse command should end with 'hook pre-tool', got %q", cmd)
+		}
+	}
+	for m, seen := range wantMatchers {
+		if !seen {
+			t.Errorf("PreToolUse matcher %q not wired", m)
+		}
 	}
 }
 

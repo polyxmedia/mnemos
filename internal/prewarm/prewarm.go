@@ -11,6 +11,7 @@ package prewarm
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -106,6 +107,12 @@ const (
 	// restoring mid-session state. Emphasise current session goal, in-
 	// session observations, recent decisions.
 	ModeCompactionRecovery
+
+	// ModePremortem: the agent submitted a plan (Request.Goal) before
+	// executing it. Emphasise how similar attempts failed: corrections,
+	// failed sessions with matching goals, skills with rumination flags,
+	// conventions the plan must respect.
+	ModePremortem
 )
 
 // Request parameters.
@@ -206,8 +213,11 @@ func (s *Service) Build(ctx context.Context, req Request) (*Block, error) {
 	// must never break the surface being measured.
 	if s.injections != nil && len(block.Surfaced) > 0 {
 		channel := injection.ChannelPrewarm
-		if req.Mode == ModeCompactionRecovery {
+		switch req.Mode {
+		case ModeCompactionRecovery:
 			channel = injection.ChannelRecovery
+		case ModePremortem:
+			channel = injection.ChannelPremortem
 		}
 		_ = s.injections.Log(ctx, channel, req.AgentID, req.Project, req.SessionID, block.Surfaced)
 	}
@@ -237,6 +247,17 @@ func (s *Service) pipeline(mode Mode) []stepFunc {
 			stepPendingRumination,
 			stepCorrections,
 			stepHotFiles,
+		}
+	case ModePremortem:
+		// Failure-first ordering: the question is "how have attempts like
+		// this plan died", so corrections and failed sessions lead, and
+		// the correction cap is wider than the session-start block's.
+		return []stepFunc{
+			stepPremortemCorrections,
+			stepFailedSessions,
+			stepMatchingSkills,
+			stepConventions,
+			stepPendingRumination,
 		}
 	default: // ModeSessionStart
 		return []stepFunc{
@@ -418,6 +439,123 @@ func stepCorrections(ctx context.Context, s *Service, req Request) (sectionDraft
 		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: r.Observation.ID})
 	}
 	return sectionDraft{title: "relevant corrections", body: strings.TrimRight(b.String(), "\n"), refs: refs}, nil
+}
+
+// stepPremortemCorrections is stepCorrections with a wider cap and the
+// full content rendered. In a premortem the corrections ARE the payload —
+// the agent asked "how does this plan fail", so we spend tokens on the
+// tried/wrong/fix substance rather than headline-only lines.
+func stepPremortemCorrections(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
+	draft := sectionDraft{title: "how similar attempts failed"}
+	if req.Goal == "" {
+		return draft, nil
+	}
+	results, err := s.obs.Search(ctx, memory.SearchInput{
+		Query:   req.Goal,
+		Type:    memory.TypeCorrection,
+		AgentID: req.AgentID,
+		Project: req.Project,
+		Limit:   6,
+	})
+	if err != nil {
+		return draft, err
+	}
+	if len(results) == 0 {
+		return draft, nil
+	}
+	var b strings.Builder
+	for _, r := range results {
+		b.WriteString("- ")
+		b.WriteString(r.Observation.Title)
+		b.WriteString(": ")
+		b.WriteString(oneLine(r.Observation.Content))
+		b.WriteString("\n")
+		draft.refs = append(draft.refs, injection.Ref{Kind: injection.KindObservation, ID: r.Observation.ID})
+	}
+	draft.body = strings.TrimRight(b.String(), "\n")
+	return draft, nil
+}
+
+// stepFailedSessions surfaces past sessions that ended failed, blocked, or
+// abandoned and whose goal/summary overlaps the plan. These are the
+// concrete precedents a premortem exists to surface: not "what went wrong
+// somewhere" but "this exact kind of attempt has died before".
+func stepFailedSessions(ctx context.Context, s *Service, req Request) (sectionDraft, error) {
+	draft := sectionDraft{title: "similar sessions that failed"}
+	if req.Goal == "" {
+		return draft, nil
+	}
+	recent, err := s.sessions.Recent(ctx, req.AgentID, 200)
+	if err != nil {
+		return draft, err
+	}
+	planTokens := overlapTokens(req.Goal)
+	type scored struct {
+		sess    session.Session
+		overlap int
+	}
+	var candidates []scored
+	for _, r := range recent {
+		switch r.Status {
+		case session.StatusFailed, session.StatusBlocked, session.StatusAbandoned:
+		default:
+			continue
+		}
+		if req.Project != "" && r.Project != "" && r.Project != req.Project {
+			continue
+		}
+		n := countOverlap(planTokens, overlapTokens(r.Goal+" "+r.Summary))
+		if n == 0 {
+			continue
+		}
+		candidates = append(candidates, scored{sess: r, overlap: n})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].overlap > candidates[j].overlap })
+	if len(candidates) == 0 {
+		return draft, nil
+	}
+	var b strings.Builder
+	for i, c := range candidates {
+		if i >= 3 {
+			break
+		}
+		b.WriteString("- ")
+		b.WriteString(c.sess.StartedAt.Format("2006-01-02"))
+		if c.sess.Goal != "" {
+			b.WriteString(" · ")
+			b.WriteString(oneLine(c.sess.Goal))
+		}
+		if c.sess.Summary != "" {
+			b.WriteString(" → ")
+			b.WriteString(oneLine(c.sess.Summary))
+		}
+		fmt.Fprintf(&b, " (%s)\n", c.sess.Status)
+	}
+	draft.body = strings.TrimRight(b.String(), "\n")
+	return draft, nil
+}
+
+// overlapTokens lowercases and splits text into a set of words longer than
+// two characters, for cheap goal-vs-plan similarity.
+func overlapTokens(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.Fields(strings.ToLower(text)) {
+		w = strings.Trim(w, ".,;:!?()[]{}\"'`")
+		if len(w) > 2 {
+			out[w] = true
+		}
+	}
+	return out
+}
+
+func countOverlap(a, b map[string]bool) int {
+	n := 0
+	for w := range a {
+		if b[w] {
+			n++
+		}
+	}
+	return n
 }
 
 func stepHotFiles(ctx context.Context, s *Service, req Request) (sectionDraft, error) {

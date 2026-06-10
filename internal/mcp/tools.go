@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -78,6 +79,17 @@ func (s *Server) registerTools() {
 			"raw store. Default mode: query-based search-and-pack. Mode='recovery' restores current " +
 			"session state after a compaction — the 'oh shit' button.",
 	}, s.handleContext)
+
+	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
+		Name: "mnemos_premortem",
+		Description: "Call BEFORE executing a non-trivial plan — after deciding the approach, before " +
+			"the first edit. Submit the plan text; returns how similar attempts failed: matching " +
+			"corrections (tried/wrong/fix), past sessions with overlapping goals that ended " +
+			"failed/blocked/abandoned, applicable skills (flagged if under rumination review), and " +
+			"conventions the plan must respect. Catches known failure modes before they are repeated " +
+			"instead of correcting them after. Cheap (one call, token-budgeted block); skipping it on " +
+			"a plan that later fails a known way is the exact loop mnemos exists to break.",
+	}, s.handlePremortem)
 
 	// Provenance / promotion (Bet 2 phase 2) ----------------------------
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
@@ -437,6 +449,54 @@ func (s *Server) handleContext(ctx context.Context, _ *mcpsdk.CallToolRequest, a
 		"text":           block.Text,
 		"token_estimate": block.TokenEstimate,
 		"observations":   summariseObs(block.Observations),
+	})
+}
+
+// ---- mnemos_premortem ---------------------------------------------------
+
+type premortemArgs struct {
+	Plan      string `json:"plan" jsonschema:"the intended approach in a few sentences — what you are about to do and how"`
+	AgentID   string `json:"agent_id,omitempty"`
+	Project   string `json:"project,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty" jsonschema:"budget for the returned block; default 800"`
+}
+
+func (s *Server) handlePremortem(ctx context.Context, _ *mcpsdk.CallToolRequest, a premortemArgs) (*mcpsdk.CallToolResult, any, error) {
+	if strings.TrimSpace(a.Plan) == "" {
+		return nil, nil, fmt.Errorf("plan is required")
+	}
+	if s.cfg.Prewarm == nil {
+		return nil, nil, fmt.Errorf("premortem unavailable: prewarm service not wired")
+	}
+	maxTokens := a.MaxTokens
+	if maxTokens <= 0 {
+		// Premortems are explicit asks, so the default budget is roomier
+		// than the ambient session-start block.
+		maxTokens = 800
+	}
+	block, err := s.cfg.Prewarm.Build(ctx, prewarm.Request{
+		Mode:      prewarm.ModePremortem,
+		AgentID:   a.AgentID,
+		Project:   a.Project,
+		SessionID: a.SessionID,
+		Goal:      a.Plan,
+		MaxTokens: maxTokens,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if block.Text == "" {
+		return jsonResult(map[string]any{
+			"text":    "",
+			"verdict": "no recorded failures, corrections, or conventions match this plan — proceed, and record what you learn",
+		})
+	}
+	return jsonResult(map[string]any{
+		"text":           block.Text,
+		"token_estimate": block.TokenEstimate,
+		"section_count":  len(block.Sections),
+		"safety_risk":    block.SafetyReport.MaxRisk.String(),
 	})
 }
 

@@ -91,6 +91,15 @@ Token-budgeted search-and-pack.
 ```
 Restores current session goal, in-session observations, conventions. The "oh shit, context just got compacted" button.
 
+### `mnemos_premortem`
+Submit a plan before executing it; returns how similar attempts failed.
+
+```json
+{"plan": "add oauth retry handling to the api client", "project": "...", "max_tokens": 800}
+```
+
+Sections, failure-first: matching corrections (wider cap than the prewarm block, full tried/wrong/fix substance), past sessions with overlapping goals that ended `failed`/`blocked`/`abandoned`, applicable skills (flagged when under rumination review), and conventions the plan must respect. Empty result returns an explicit "no recorded failures match — proceed" verdict so the agent knows the store was consulted, not skipped. Surfaced memories are recorded in the injection log under the `premortem` channel.
+
 ## Provenance
 
 ### `mnemos_promote`
