@@ -181,7 +181,7 @@ An implementation declares its tier through `memory/capabilities`, and the decla
 | **memory-core** | `save`, `search` (keyword), `get`, `link`, `invalidate`, bi-temporal fields, deterministic dedup, the type taxonomy floor (§4.2). |
 | **+provenance** | core, plus `source_kind` / `trust_tier` / `derived_from`, raw-tier quarantine, `promote`, `provenance`. |
 | **+embeddings** | core, plus hybrid retrieval with an honest `retrieval_mode`. |
-| **+federation** | the above, plus cross-store export/import that preserves bi-temporal and provenance fields. **(open, depends on ROADMAP Bet 2 phase 4.)** |
+| **+portable** | the above, plus fidelity-preserving export/import: a full-store dump round-trips with identity, bi-temporal validity, and provenance intact. Shipped via `Service.Restore`. Distinct from live multi-store *federation* (sync), which remains a future concern. |
 
 A conformance test suite is part of the deliverable, not prose. The credibility gap in OMP is precisely that §8 of its spec is a checklist with nothing runnable behind it. mnemos's verify harness is the seed of the runnable version.
 
@@ -210,7 +210,7 @@ Field extension is a named mechanism, not a free-for-all and not a wall. Vendor-
 2. **Determinism as MUST or rationale.** §7. Is "no LLM in the memory layer" a normative requirement of the protocol, or mnemos's stated stance that the protocol merely permits?
 3. **Type taxonomy.** §4.2. Is the projection table from coding-agent types onto the cognitive trio normative, or do we standardise only the trio and leave the rest as `x_` extensions?
 4. **Naming.** `memory/*` method names, the `x_` extension prefix, and the spec's public name. "mcp-memory-spec" is a working title.
-5. **Federation tier.** §9. Gate it behind Bet 2 phase 4 (fidelity-preserving export/import) shipping first, or spec it now as a forward declaration?
+5. **Portable vs federation.** §9. The portable tier (fidelity-preserving export/import) ships. Should live multi-store *federation* (sync) become a further tier in this spec, or stay a separate concern?
 
 ---
 

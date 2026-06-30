@@ -61,8 +61,9 @@ func TestCapabilitiesHybridTierIsBehaviorBound(t *testing.T) {
 		t.Errorf("with embedder the embeddings tier must be present, got tiers=%v hybrid=%v", c.Tiers, c.HybridRetrieval)
 	}
 
-	// Federation is unbuilt regardless of embedder state.
-	if c.Federation || hasTier(c.Tiers, "federation") {
-		t.Errorf("federation must be absent until Bet 2 phase 4, got tiers=%v", c.Tiers)
+	// Fidelity-preserving export/import ships, so the portable tier is always
+	// present regardless of embedder state.
+	if !c.PortableExport || !hasTier(c.Tiers, "portable") {
+		t.Errorf("portable tier must be present, got tiers=%v portable=%v", c.Tiers, c.PortableExport)
 	}
 }

@@ -10,7 +10,7 @@ const (
 	tierCore       = "memory-core"
 	tierProvenance = "provenance"
 	tierEmbeddings = "embeddings"
-	tierFederation = "federation"
+	tierPortable   = "portable"
 )
 
 // Capabilities is an honest, behaviour-bound statement of which parts of the
@@ -38,9 +38,11 @@ type Capabilities struct {
 	// configured and dimensioned, so it tracks what search can actually do.
 	HybridRetrieval bool `json:"hybrid_retrieval"`
 
-	// Federation (fidelity-preserving cross-store export/import) is unbuilt.
-	// ROADMAP Bet 2 phase 4.
-	Federation bool `json:"federation"`
+	// PortableExport reports fidelity-preserving export/import: a full-store
+	// dump round-trips with identity, bi-temporal validity, and provenance
+	// intact. This is portability, not live multi-store federation, which is
+	// a separate future capability.
+	PortableExport bool `json:"portable_export"`
 }
 
 // Capabilities returns the live capability document for this service. Read it
@@ -55,7 +57,9 @@ func (s *Service) Capabilities() Capabilities {
 		TypedLinks:         true,
 		DeterministicDedup: true,
 		HybridRetrieval:    s.HybridEnabled(),
-		Federation:         false,
+		// Fidelity-preserving export/import ships (ROADMAP Bet 2 phase 4):
+		// Service.Restore round-trips a full dump verbatim.
+		PortableExport: true,
 	}
 	c.Tiers = c.tiers()
 	return c
@@ -74,8 +78,8 @@ func (c Capabilities) tiers() []string {
 	if c.HybridRetrieval {
 		t = append(t, tierEmbeddings)
 	}
-	if c.Federation {
-		t = append(t, tierFederation)
+	if c.PortableExport {
+		t = append(t, tierPortable)
 	}
 	return t
 }
