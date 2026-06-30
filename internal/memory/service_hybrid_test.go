@@ -49,13 +49,17 @@ func TestHybridSearchExercisesFuseWithVectors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Hybrid search fires fuseWithVectors because HybridEnabled() is true.
-	results, err := svc.Search(ctx, memory.SearchInput{Query: "sqlite"})
+	// Hybrid search fires fuseWithVectors because HybridEnabled() is true and
+	// the saved observations carry vectors, so fusion genuinely runs.
+	results, mode, err := svc.SearchWithMode(ctx, memory.SearchInput{Query: "sqlite"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(results) < 2 {
 		t.Errorf("want at least 2 hits, got %d", len(results))
+	}
+	if mode != memory.RetrievalHybrid {
+		t.Errorf("want retrieval mode %q, got %q", memory.RetrievalHybrid, mode)
 	}
 }
 
@@ -73,13 +77,17 @@ func TestSearchFailsOpenOnEmbedError(t *testing.T) {
 		Title: "x", Content: "sqlite", Type: memory.TypePattern,
 	})
 	// Search should still work even if embedding the query errors — we
-	// fall open to BM25-only.
-	results, err := svc.Search(ctx, memory.SearchInput{Query: "sqlite"})
+	// fall open to BM25-only, and the mode must report fts (not hybrid)
+	// even though HybridEnabled() is true, so the signal never lies.
+	results, mode, err := svc.SearchWithMode(ctx, memory.SearchInput{Query: "sqlite"})
 	if err != nil {
 		t.Fatalf("search must not fail on embed error: %v", err)
 	}
 	if len(results) == 0 {
 		t.Error("BM25 fallback should still return results")
+	}
+	if mode != memory.RetrievalFTS {
+		t.Errorf("embed failure must report %q, got %q", memory.RetrievalFTS, mode)
 	}
 }
 

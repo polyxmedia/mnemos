@@ -310,6 +310,16 @@ func (s *Service) Promote(ctx context.Context, in PromoteInput) error {
 // on top. Hybrid mode activates automatically when an embedder is
 // configured and observations have stored vectors.
 func (s *Service) Search(ctx context.Context, in SearchInput) ([]SearchResult, error) {
+	res, _, err := s.SearchWithMode(ctx, in)
+	return res, err
+}
+
+// SearchWithMode is Search plus the retrieval mode that actually ran for this
+// query. The mode is derived from the real per-call outcome (did the query
+// embed and did fusion find any vector to mix in), not from HybridEnabled():
+// a hybrid-capable store reports RetrievalFTS when the embedder fails open or
+// no candidate carries a vector, so the signal never overstates what happened.
+func (s *Service) SearchWithMode(ctx context.Context, in SearchInput) ([]SearchResult, RetrievalMode, error) {
 	limit := in.Limit
 	if limit <= 0 {
 		limit = 20
@@ -320,12 +330,17 @@ func (s *Service) Search(ctx context.Context, in SearchInput) ([]SearchResult, e
 
 	raw, err := s.store.Search(ctx, in)
 	if err != nil {
-		return nil, err
+		return nil, RetrievalFTS, err
 	}
 
 	now := s.clock().UTC()
+	mode := RetrievalFTS
 	if s.HybridEnabled() && in.Query != "" {
-		raw = s.fuseWithVectors(ctx, in.Query, raw)
+		var fused bool
+		raw, fused = s.fuseWithVectors(ctx, in.Query, raw)
+		if fused {
+			mode = RetrievalHybrid
+		}
 	}
 	for i := range raw {
 		raw[i].Score = s.ranker.Score(raw[i].Observation, raw[i].Score, now)
@@ -335,18 +350,22 @@ func (s *Service) Search(ctx context.Context, in SearchInput) ([]SearchResult, e
 	if len(raw) > limit {
 		raw = raw[:limit]
 	}
-	return raw, nil
+	return raw, mode, nil
 }
 
 // fuseWithVectors embeds the query and re-ranks BM25 candidates via RRF,
 // mixing the two ranks according to HybridParams. Candidates missing
 // embeddings get their cosine rank set to infinity (no semantic signal,
-// BM25 alone carries them).
-func (s *Service) fuseWithVectors(ctx context.Context, query string, cands []SearchResult) []SearchResult {
+// BM25 alone carries them). The bool return reports whether fusion actually
+// contributed: true only when the query embedded AND at least one candidate
+// had a stored vector. When it is false the cosine term is a flat constant
+// and BM25 alone decided the ordering, so the caller should report
+// RetrievalFTS rather than overstate hybrid retrieval.
+func (s *Service) fuseWithVectors(ctx context.Context, query string, cands []SearchResult) ([]SearchResult, bool) {
 	qvec, err := s.embedder.Embed(ctx, query)
 	if err != nil || len(qvec) == 0 {
 		// Fail open: BM25-only re-rank keeps search working.
-		return cands
+		return cands, false
 	}
 
 	// Score each candidate by cosine against the query.
@@ -368,11 +387,13 @@ func (s *Service) fuseWithVectors(ctx context.Context, query string, cands []Sea
 	// an embedding land at the bottom with cosRank = 0 (treated as "miss").
 	cosSorted := append([]ranked(nil), items...)
 	sort.SliceStable(cosSorted, func(i, j int) bool { return cosSorted[i].cosine > cosSorted[j].cosine })
+	embedded := false
 	for rank, item := range cosSorted {
 		if len(cands[item.idx].Observation.Embedding) == 0 {
 			continue
 		}
 		items[item.idx].cosRank = rank + 1
+		embedded = true
 	}
 
 	// Write RRF score into BM25 field so the downstream Ranker multiplier
@@ -380,7 +401,7 @@ func (s *Service) fuseWithVectors(ctx context.Context, query string, cands []Sea
 	for _, it := range items {
 		cands[it.idx].Score = rrfScore(it.bm25Rank, it.cosRank, s.hybrid)
 	}
-	return cands
+	return cands, embedded
 }
 
 // Context returns a pre-budgeted block of memory ready for injection into

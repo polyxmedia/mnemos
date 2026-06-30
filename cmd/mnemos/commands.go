@@ -106,7 +106,7 @@ func runSearch(ctx context.Context, args []string) error {
 	}
 	defer d.close()
 
-	results, err := d.mem.Search(ctx, memory.SearchInput{Query: args[0], Limit: 20})
+	results, mode, err := d.mem.SearchWithMode(ctx, memory.SearchInput{Query: args[0], Limit: 20})
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
@@ -118,6 +118,7 @@ func runSearch(ctx context.Context, args []string) error {
 		fmt.Printf("  %s  %-8s  %s\n", r.Observation.ID, r.Observation.Type, r.Observation.Title)
 		fmt.Printf("    %s\n\n", r.Snippet)
 	}
+	fmt.Printf("%d result(s) · retrieval: %s\n", len(results), mode)
 	return nil
 }
 

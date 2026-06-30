@@ -88,8 +88,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /v1/search", jsonIn(
 		http.StatusBadRequest, nil,
 		func(r *http.Request, in memory.SearchInput) (int, map[string]any, error) {
-			results, err := s.mem.Search(r.Context(), in)
-			return http.StatusOK, map[string]any{"results": results}, err
+			results, mode, err := s.mem.SearchWithMode(r.Context(), in)
+			return http.StatusOK, map[string]any{"results": results, "retrieval_mode": string(mode)}, err
 		}))
 	mux.Handle("POST /v1/context", jsonIn(
 		http.StatusBadRequest, nil,

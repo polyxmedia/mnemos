@@ -39,7 +39,9 @@ BM25 + importance + recency + access-frequency ranked search.
 | `include_raw` |   | include quarantined raw-tier observations |
 | `as_of` |   | ISO-8601, historical query |
 
-Returns `{results: [{id, title, type, tags, importance, score, snippet, created_at, source_kind, trust_tier, derived_from}]}`.
+Returns `{results: [{id, title, type, tags, importance, score, snippet, created_at, source_kind, trust_tier, derived_from}], retrieval_mode}`.
+
+`retrieval_mode` is `"hybrid"` when vector cosine was fused into the ranking via RRF, or `"fts"` when BM25/FTS5 alone decided it. It reports the actual per-call outcome, not the configured capability: a hybrid-capable store still returns `"fts"` when the embedder fails at query time or no matching observation carries a vector, so the signal never overstates what ran.
 
 ### `mnemos_get`
 Fetch full observation by ID. Bumps access counter.

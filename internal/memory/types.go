@@ -261,6 +261,21 @@ type SearchResult struct {
 	Snippet     string
 }
 
+// RetrievalMode reports which retrieval path actually decided a query's
+// ranking, so callers and the verify harness can tell whether semantic
+// similarity contributed or BM25 alone did. It reflects the real per-call
+// outcome, never the configured capability: a hybrid-capable store still
+// reports RetrievalFTS when the embedder fails at query time or no candidate
+// has a stored vector to fuse against.
+type RetrievalMode string
+
+const (
+	// RetrievalFTS means BM25/FTS5 alone decided the ranking.
+	RetrievalFTS RetrievalMode = "fts"
+	// RetrievalHybrid means vector cosine was fused into the ranking via RRF.
+	RetrievalHybrid RetrievalMode = "hybrid"
+)
+
 // ContextInput parameterises mnemos_context: agent gets a token-budgeted
 // block of relevant memory.
 type ContextInput struct {

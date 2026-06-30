@@ -163,13 +163,24 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 
 // Search runs a ranked memory search.
 func (c *Client) Search(ctx context.Context, in SearchInput) ([]SearchHit, error) {
+	hits, _, err := c.SearchWithMode(ctx, in)
+	return hits, err
+}
+
+// SearchWithMode is Search plus the retrieval mode that actually ran for this
+// query: "hybrid" when vector cosine was fused into the ranking via RRF, "fts"
+// when BM25/FTS5 alone decided it. The mode reflects the real per-call outcome,
+// so a hybrid-capable server still returns "fts" when the embedder fails at
+// query time or no matching observation carries a vector.
+func (c *Client) SearchWithMode(ctx context.Context, in SearchInput) ([]SearchHit, string, error) {
 	var out struct {
-		Results []SearchHit `json:"results"`
+		Results       []SearchHit `json:"results"`
+		RetrievalMode string      `json:"retrieval_mode"`
 	}
 	if err := c.do(ctx, "POST", "/v1/search", in, &out); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return out.Results, nil
+	return out.Results, out.RetrievalMode, nil
 }
 
 // SessionStart opens a session and returns the pre-warm block.

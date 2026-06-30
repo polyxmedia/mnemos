@@ -279,7 +279,7 @@ func (s *Server) handleSearch(ctx context.Context, _ *mcpsdk.CallToolRequest, a 
 	} else if t != nil {
 		in.AsOf = *t
 	}
-	results, err := s.cfg.Memory.Search(ctx, in)
+	results, mode, err := s.cfg.Memory.SearchWithMode(ctx, in)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -299,7 +299,7 @@ func (s *Server) handleSearch(ctx context.Context, _ *mcpsdk.CallToolRequest, a 
 			"derived_from": r.Observation.DerivedFrom,
 		})
 	}
-	return jsonResult(map[string]any{"results": hits})
+	return jsonResult(map[string]any{"results": hits, "retrieval_mode": string(mode)})
 }
 
 // ---- mnemos_get / delete / link ---------------------------------------
