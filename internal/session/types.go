@@ -68,6 +68,10 @@ type CloseInput struct {
 // Store persists sessions.
 type Store interface {
 	Insert(ctx context.Context, s *Session) error
+	// Restore inserts a session verbatim (preserving ID, status, summary,
+	// reflection, timestamps), skipping on an existing ID. The fidelity-import
+	// counterpart to Insert. Returns true when a row was written.
+	Restore(ctx context.Context, s *Session) (bool, error)
 	Get(ctx context.Context, id string) (*Session, error)
 	Close(ctx context.Context, in CloseInput) error
 	Recent(ctx context.Context, agentID string, limit int) ([]Session, error)

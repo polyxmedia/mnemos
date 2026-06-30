@@ -62,6 +62,17 @@ func (s *Service) Close(ctx context.Context, in CloseInput) error {
 	return s.store.Close(ctx, in)
 }
 
+// Restore reinserts an exported session verbatim, preserving its ID, status,
+// summary, reflection, and timestamps. Keeping the original ID is what lets
+// restored observations' session_id foreign keys resolve. Returns true when a
+// row was written, false when a session with the same ID already existed.
+func (s *Service) Restore(ctx context.Context, sess *Session) (bool, error) {
+	if sess.ID == "" {
+		return false, fmt.Errorf("session restore: id required")
+	}
+	return s.store.Restore(ctx, sess)
+}
+
 // Get returns a session by ID.
 func (s *Service) Get(ctx context.Context, id string) (*Session, error) {
 	return s.store.Get(ctx, id)

@@ -88,6 +88,11 @@ type ScoreReport struct {
 // Store persists skills.
 type Store interface {
 	Upsert(ctx context.Context, in SaveInput) (*Skill, error)
+	// Restore inserts a skill verbatim (preserving ID, version, effectiveness,
+	// counts, timestamps), skipping on an existing ID or UNIQUE(agent, name).
+	// The fidelity-import counterpart to Upsert, which version-bumps. Returns
+	// true when a row was written.
+	Restore(ctx context.Context, sk *Skill) (bool, error)
 	Get(ctx context.Context, id string) (*Skill, error)
 	Match(ctx context.Context, in MatchInput) ([]Match, error)
 	List(ctx context.Context, agentID string) ([]Skill, error)

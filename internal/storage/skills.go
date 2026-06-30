@@ -96,6 +96,52 @@ func (s *skillStore) Upsert(ctx context.Context, in skills.SaveInput) (*skills.S
 	}
 }
 
+// Restore inserts a skill verbatim, preserving its ID, version, effectiveness,
+// use/success counts, and timestamps exactly as exported. Unlike Upsert (which
+// is name-keyed and bumps the version), Restore is for fidelity import. INSERT
+// OR IGNORE skips on either an existing ID or the UNIQUE(agent_id, name) clash,
+// so re-importing a skill already present is a no-op. Returns true when a row
+// was actually written.
+func (s *skillStore) Restore(ctx context.Context, sk *skills.Skill) (bool, error) {
+	if sk.Name == "" || sk.Procedure == "" {
+		return false, fmt.Errorf("skill restore: name and procedure required")
+	}
+	agent := sk.AgentID
+	if agent == "" {
+		agent = "default"
+	}
+	version := sk.Version
+	if version < 1 {
+		version = 1
+	}
+	tags, err := json.Marshal(coalesceSlice(sk.Tags))
+	if err != nil {
+		return false, fmt.Errorf("marshal tags: %w", err)
+	}
+	sources, err := json.Marshal(coalesceSlice(sk.SourceSessions))
+	if err != nil {
+		return false, fmt.Errorf("marshal sources: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO skills
+			(id, agent_id, name, description, procedure, pitfalls, tags, source_sessions,
+			 use_count, success_count, effectiveness, version, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		sk.ID, agent, sk.Name, sk.Description, sk.Procedure,
+		nullableStr(sk.Pitfalls), string(tags), string(sources),
+		sk.UseCount, sk.SuccessCount, sk.Effectiveness, version,
+		sk.CreatedAt.UTC(), sk.UpdatedAt.UTC(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("restore skill: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (s *skillStore) Get(ctx context.Context, id string) (*skills.Skill, error) {
 	row := s.db.QueryRowContext(ctx, selectSkillSQL+` WHERE id = ?`, id)
 	skill, err := scanSkill(row)

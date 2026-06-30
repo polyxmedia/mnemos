@@ -21,6 +21,10 @@ var ErrNotFound = errors.New("observation not found")
 // Reader is the read-only observation surface.
 type Reader interface {
 	Get(ctx context.Context, id string) (*Observation, error)
+	// Export returns every observation (all tiers and validity states) in one
+	// drained query, without bumping access counts. The read side of the
+	// fidelity export/import round-trip.
+	Export(ctx context.Context) ([]Observation, error)
 	Search(ctx context.Context, in SearchInput) ([]SearchResult, error)
 	ListByProject(ctx context.Context, agentID, project string, obsType ObsType, limit int) ([]Observation, error)
 	ListBySession(ctx context.Context, sessionID string) ([]Observation, error)
@@ -37,6 +41,11 @@ type Reader interface {
 // Writer is the mutating observation surface, excluding housekeeping.
 type Writer interface {
 	Insert(ctx context.Context, o *Observation) error
+	// Restore inserts an observation verbatim (all fields, including
+	// invalidated_at / access_count / provenance), skipping on an existing
+	// ID. It is the fidelity-import counterpart to Insert. Returns true when
+	// a row was written.
+	Restore(ctx context.Context, o *Observation) (bool, error)
 	Delete(ctx context.Context, id string) error
 	Invalidate(ctx context.Context, id string, validUntil time.Time) error
 	Link(ctx context.Context, sourceID, targetID string, linkType LinkType) error

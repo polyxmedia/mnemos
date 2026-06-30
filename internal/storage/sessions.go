@@ -44,6 +44,49 @@ func (s *sessStore) Insert(ctx context.Context, sess *session.Session) error {
 	return nil
 }
 
+// Restore inserts a session verbatim, preserving its ID, status, summary,
+// reflection, and start/end timestamps exactly as exported. Sessions must
+// keep their original IDs so restored observations' session_id foreign keys
+// resolve. INSERT OR IGNORE skips a session whose ID already exists. Returns
+// true when a row was actually written.
+func (s *sessStore) Restore(ctx context.Context, sess *session.Session) (bool, error) {
+	status := sess.Status
+	if status == "" {
+		status = session.StatusOK
+	}
+	agentID := sess.AgentID
+	if agentID == "" {
+		agentID = "default"
+	}
+	tags, err := json.Marshal(coalesceSliceStr(sess.OutcomeTags))
+	if err != nil {
+		return false, fmt.Errorf("marshal outcome_tags: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO sessions
+			(id, agent_id, project, goal, summary, reflection, status, outcome_tags, started_at, ended_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		sess.ID,
+		agentID,
+		nullableStr(sess.Project),
+		nullableStr(sess.Goal),
+		nullableStr(sess.Summary),
+		nullableStr(sess.Reflection),
+		string(status),
+		string(tags),
+		sess.StartedAt.UTC(),
+		nullableTime(sess.EndedAt),
+	)
+	if err != nil {
+		return false, fmt.Errorf("restore session: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (s *sessStore) Get(ctx context.Context, id string) (*session.Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+sessColumns+` FROM sessions WHERE id = ?`, id)
 	return scanSession(row)

@@ -244,37 +244,67 @@ func runImport(ctx context.Context, args []string) error {
 	}
 	defer d.close()
 
-	// Skills first so any references in observations.source_sessions resolve;
-	// sessions before observations so the FK is satisfied.
-	for _, sk := range snap.Skills {
-		if _, err := d.skl.Save(ctx, skills.SaveInput{
-			AgentID: sk.AgentID, Name: sk.Name, Description: sk.Description,
-			Procedure: sk.Procedure, Pitfalls: sk.Pitfalls, Tags: sk.Tags,
-			SourceSessions: sk.SourceSessions,
-		}); err != nil {
-			return fmt.Errorf("import skill %s: %w", sk.Name, err)
-		}
-	}
-	for _, s := range snap.Sessions {
-		if _, err := d.sess.Open(ctx, session.OpenInput{
-			AgentID: s.AgentID, Project: s.Project, Goal: s.Goal,
-		}); err != nil {
+	// Fidelity restore: every record keeps its original ID, timestamps,
+	// provenance, and (for observations) bi-temporal validity. Re-importing a
+	// record already present is skipped, not duplicated or re-versioned. This
+	// is a trusted operation, the JSON equivalent of restoring a database
+	// backup, so it preserves trust tiers verbatim rather than quarantining.
+	//
+	// Order matters for the observation -> session foreign key: sessions
+	// restore first (with their original IDs), then observations resolve.
+	var (
+		obsAdded, obsSkipped     int
+		sessAdded, sessSkipped   int
+		skillAdded, skillSkipped int
+		repointed                int
+		knownSessions            = make(map[string]bool, len(snap.Sessions))
+	)
+	for i := range snap.Sessions {
+		s := snap.Sessions[i]
+		knownSessions[s.ID] = true
+		added, err := d.sess.Restore(ctx, &s)
+		if err != nil {
 			return fmt.Errorf("import session %s: %w", s.ID, err)
 		}
+		countAddSkip(added, &sessAdded, &sessSkipped)
 	}
-	for _, o := range snap.Observations {
-		if _, err := d.mem.Save(ctx, memory.SaveInput{
-			AgentID: o.AgentID, Project: o.Project, Title: o.Title,
-			Content: o.Content, Type: o.Type, Tags: o.Tags,
-			Importance: o.Importance, Rationale: o.Rationale,
-			Structured: o.Structured,
-		}); err != nil {
+	for i := range snap.Skills {
+		sk := snap.Skills[i]
+		added, err := d.skl.Restore(ctx, &sk)
+		if err != nil {
+			return fmt.Errorf("import skill %s: %w", sk.Name, err)
+		}
+		countAddSkip(added, &skillAdded, &skillSkipped)
+	}
+	for i := range snap.Observations {
+		o := snap.Observations[i]
+		// Drop a session link the dump does not carry, so the foreign key
+		// cannot dangle. Rare in a full dump; happens with edited or partial
+		// exports.
+		if o.SessionID != "" && !knownSessions[o.SessionID] {
+			o.SessionID = ""
+			repointed++
+		}
+		added, err := d.mem.Restore(ctx, &o)
+		if err != nil {
 			return fmt.Errorf("import observation %s: %w", o.ID, err)
 		}
+		countAddSkip(added, &obsAdded, &obsSkipped)
 	}
-	fmt.Printf("imported %d observations, %d sessions, %d skills from %s\n",
-		len(snap.Observations), len(snap.Sessions), len(snap.Skills), args[0])
+	fmt.Printf("imported from %s: observations %d added / %d skipped, sessions %d / %d, skills %d / %d\n",
+		args[0], obsAdded, obsSkipped, sessAdded, sessSkipped, skillAdded, skillSkipped)
+	if repointed > 0 {
+		fmt.Printf("  %d observation(s) had a dangling session link cleared\n", repointed)
+	}
 	return nil
+}
+
+func countAddSkip(added bool, addCount, skipCount *int) {
+	if added {
+		*addCount++
+	} else {
+		*skipCount++
+	}
 }
 
 func runPrune(ctx context.Context, _ []string) error {
@@ -535,22 +565,16 @@ type snapshot struct {
 
 func dumpAll(ctx context.Context, db *storage.DB) (*snapshot, error) {
 	out := &snapshot{}
-	rows, err := db.SQL().QueryContext(ctx, `SELECT id FROM observations`)
+	// Single drained query, no per-id Get. The previous loop held a SELECT
+	// cursor open while calling Get (which itself queries and writes
+	// access_count) for each row, which deadlocks the single-connection pool
+	// on any populated store and bumps access counts as a side effect of
+	// merely exporting.
+	obs, err := db.Observations().Export(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list observations: %w", err)
+		return nil, fmt.Errorf("export observations: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan id: %w", err)
-		}
-		o, err := db.Observations().Get(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("load %s: %w", id, err)
-		}
-		out.Observations = append(out.Observations, *o)
-	}
+	out.Observations = obs
 	if list, err := db.Sessions().Recent(ctx, "", 10000); err == nil {
 		out.Sessions = list
 	}

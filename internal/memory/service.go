@@ -193,6 +193,30 @@ func (s *Service) Save(ctx context.Context, in SaveInput) (*SaveResult, error) {
 	return &SaveResult{Observation: o, Deduped: false}, nil
 }
 
+// Restore reinserts an exported observation verbatim, preserving its ID,
+// bi-temporal timestamps, provenance, trust tier, access count, and content
+// hash. It is the fidelity-import counterpart to Save: where Save mints a new
+// ID, stamps fresh timestamps, runs content-hash dedup, and clamps the trust
+// tier, Restore does none of that. It is the trusted path for restoring a
+// full-store dump (the JSON equivalent of copying the database file), so it
+// does not quarantine or re-scan. Returns true when a row was written, false
+// when an observation with the same ID was already present and skipped.
+func (s *Service) Restore(ctx context.Context, o *Observation) (bool, error) {
+	if strings.TrimSpace(o.Title) == "" {
+		return false, fmt.Errorf("restore: title is required")
+	}
+	if !o.Type.Valid() {
+		return false, fmt.Errorf("restore: invalid type %q", o.Type)
+	}
+	if o.SourceKind != "" && !o.SourceKind.Valid() {
+		return false, fmt.Errorf("restore: invalid source_kind %q", o.SourceKind)
+	}
+	if o.TrustTier != "" && !o.TrustTier.Valid() {
+		return false, fmt.Errorf("restore: invalid trust_tier %q", o.TrustTier)
+	}
+	return s.store.Restore(ctx, o)
+}
+
 // clampTrustTier enforces the quarantine invariant: only user-authored
 // observations may occupy the tier the caller requested. Every other source
 // — tool output, agent inference, imports, and dream — is forced to raw no

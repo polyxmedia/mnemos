@@ -52,6 +52,14 @@ func (f *fakeMemoryReader) Get(ctx context.Context, id string) (*memory.Observat
 	return o, nil
 }
 
+func (f *fakeMemoryReader) Export(ctx context.Context) ([]memory.Observation, error) {
+	out := make([]memory.Observation, 0, len(f.items))
+	for _, o := range f.items {
+		out = append(out, *o)
+	}
+	return out, nil
+}
+
 func (f *fakeMemoryReader) Search(ctx context.Context, in memory.SearchInput) ([]memory.SearchResult, error) {
 	return nil, nil
 }

@@ -96,6 +96,95 @@ func (s *obsStore) Insert(ctx context.Context, o *memory.Observation) error {
 	return nil
 }
 
+// Restore inserts an observation verbatim, preserving its ID, bi-temporal
+// timestamps (including invalidated_at), provenance, access count, content
+// hash, and embedding exactly as exported. Unlike Insert (the Save path), it
+// writes every column and uses INSERT OR IGNORE, so re-importing an already
+// present ID (or a skill-style uniqueness clash) is skipped rather than
+// erroring. It never clamps the trust tier, so a quarantined raw observation
+// comes back raw. Returns true when a row was actually written.
+func (s *obsStore) Restore(ctx context.Context, o *memory.Observation) (bool, error) {
+	tags, err := json.Marshal(coalesceSliceStr(o.Tags))
+	if err != nil {
+		return false, fmt.Errorf("marshal tags: %w", err)
+	}
+	derived, err := json.Marshal(coalesceSliceStr(o.DerivedFrom))
+	if err != nil {
+		return false, fmt.Errorf("marshal derived_from: %w", err)
+	}
+	// Defense in depth for hand-edited dumps: keep CHECK-valid defaults.
+	agentID := o.AgentID
+	if agentID == "" {
+		agentID = "default"
+	}
+	sourceKind := o.SourceKind
+	if sourceKind == "" {
+		sourceKind = memory.SourceUser
+	}
+	trustTier := o.TrustTier
+	if trustTier == "" {
+		trustTier = memory.TrustCurated
+	}
+	res, err := s.db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO observations (
+			id, session_id, agent_id, project,
+			title, content, obs_type, tags, importance,
+			access_count, last_accessed_at,
+			created_at, valid_from, valid_until, invalidated_at, expires_at,
+			content_hash, structured, rationale,
+			embedding, embedding_model,
+			source_kind, trust_tier, derived_from, last_exported_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		o.ID,
+		nullableStr(o.SessionID),
+		agentID,
+		nullableStr(o.Project),
+		o.Title,
+		o.Content,
+		string(o.Type),
+		string(tags),
+		o.Importance,
+		o.AccessCount,
+		nullableTime(o.LastAccessedAt),
+		o.CreatedAt.UTC(),
+		o.ValidFrom.UTC(),
+		nullableTime(o.ValidUntil),
+		nullableTime(o.InvalidatedAt),
+		nullableTime(o.ExpiresAt),
+		nullableStr(o.ContentHash),
+		nullableStr(o.Structured),
+		nullableStr(o.Rationale),
+		encodeVector(o.Embedding),
+		nullableStr(o.EmbeddingModel),
+		string(sourceKind),
+		string(trustTier),
+		string(derived),
+		nullableTime(o.LastExportedAt),
+	)
+	if err != nil {
+		return false, fmt.Errorf("restore observation: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// Export returns every observation, all tiers and validity states included,
+// in a single drained query. Unlike Get it does not bump access counts, so an
+// export never mutates the store, and unlike iterating ids + Get it never
+// holds a cursor open across a second query, which would deadlock the
+// single-connection pool. Used by the fidelity export path.
+func (s *obsStore) Export(ctx context.Context) ([]memory.Observation, error) {
+	rows, err := s.db.QueryContext(ctx, selectObsSQL+` ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("export observations: %w", err)
+	}
+	defer rows.Close()
+	return scanObsList(rows)
+}
+
 func (s *obsStore) Get(ctx context.Context, id string) (*memory.Observation, error) {
 	row := s.db.QueryRowContext(ctx, selectObsSQL+` WHERE id = ?`, id)
 	o, err := scanObs(row)

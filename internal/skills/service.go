@@ -49,6 +49,18 @@ func (s *Service) Match(ctx context.Context, in MatchInput) ([]Match, error) {
 	return s.store.Match(ctx, in)
 }
 
+// Restore reinserts an exported skill verbatim, preserving its ID, version,
+// effectiveness, use/success counts, and timestamps. Unlike Save (which
+// version-bumps an existing name), it is the fidelity-import path: an already
+// present skill is skipped, not re-versioned. Returns true when a row was
+// written.
+func (s *Service) Restore(ctx context.Context, sk *Skill) (bool, error) {
+	if sk.ID == "" {
+		return false, fmt.Errorf("skill restore: id required")
+	}
+	return s.store.Restore(ctx, sk)
+}
+
 // Get returns a skill by ID.
 func (s *Service) Get(ctx context.Context, id string) (*Skill, error) {
 	return s.store.Get(ctx, id)
