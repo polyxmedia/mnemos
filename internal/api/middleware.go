@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,12 +21,22 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.apiKey {
+		if !strings.HasPrefix(auth, "Bearer ") || !secureTokenEqual(strings.TrimPrefix(auth, "Bearer "), s.apiKey) {
 			writeErr(w, http.StatusUnauthorized, "missing or invalid bearer token")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// secureTokenEqual compares a presented token to the configured key in
+// constant time. Both sides are hashed first so the comparison runs over
+// fixed-length digests and leaks neither the key's length nor where a
+// mismatch occurred, closing the timing side-channel a plain != opens.
+func secureTokenEqual(presented, key string) bool {
+	p := sha256.Sum256([]byte(presented))
+	k := sha256.Sum256([]byte(key))
+	return subtle.ConstantTimeCompare(p[:], k[:]) == 1
 }
 
 // withLogging emits a structured slog line for every request.
