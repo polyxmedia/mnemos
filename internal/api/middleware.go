@@ -9,11 +9,12 @@ import (
 	"time"
 )
 
-// withAuth enforces a bearer token on every route except /healthz when a
-// non-empty APIKey is configured. Empty key disables auth entirely.
+// withAuth enforces a bearer token on every route except the unauthenticated
+// discovery endpoints (/healthz, /v1/capabilities) when a non-empty APIKey is
+// configured. Empty key disables auth entirely.
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.apiKey == "" || r.URL.Path == "/healthz" {
+		if s.apiKey == "" || r.URL.Path == "/healthz" || r.URL.Path == "/v1/capabilities" {
 			next.ServeHTTP(w, r)
 			return
 		}

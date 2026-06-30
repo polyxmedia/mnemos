@@ -10,11 +10,12 @@ import (
 	"github.com/polyxmedia/mnemos/internal/session"
 )
 
-// registerResources attaches the three Mnemos MCP resources:
+// registerResources attaches the four Mnemos MCP resources:
 //
 //	mnemos://session/current  — most recent open session
 //	mnemos://skills/index     — slim skill index
 //	mnemos://stats            — system statistics
+//	mnemos://capabilities     — live mcp-memory-spec conformance
 func (s *Server) registerResources() {
 	s.sdk.AddResource(&mcpsdk.Resource{
 		URI:         "mnemos://session/current",
@@ -36,6 +37,13 @@ func (s *Server) registerResources() {
 		Description: "Memory system statistics",
 		MIMEType:    "application/json",
 	}, s.readStats)
+
+	s.sdk.AddResource(&mcpsdk.Resource{
+		URI:         "mnemos://capabilities",
+		Name:        "Capabilities",
+		Description: "Live mcp-memory-spec conformance: tiers and capability flags, bound to actual behaviour",
+		MIMEType:    "application/json",
+	}, s.readCapabilities)
 }
 
 func (s *Server) readCurrentSession(ctx context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
@@ -75,6 +83,10 @@ func (s *Server) readStats(ctx context.Context, req *mcpsdk.ReadResourceRequest)
 		return nil, err
 	}
 	return resourceJSON(req.Params.URI, st)
+}
+
+func (s *Server) readCapabilities(_ context.Context, req *mcpsdk.ReadResourceRequest) (*mcpsdk.ReadResourceResult, error) {
+	return resourceJSON(req.Params.URI, s.cfg.Memory.Capabilities())
 }
 
 func resourceJSON(uri string, v any) (*mcpsdk.ReadResourceResult, error) {

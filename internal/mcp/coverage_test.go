@@ -64,13 +64,14 @@ func TestResourcesList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Resources) != 3 {
-		t.Errorf("want 3 resources, got %d", len(res.Resources))
+	if len(res.Resources) != 4 {
+		t.Errorf("want 4 resources, got %d", len(res.Resources))
 	}
 	wantURIs := map[string]bool{
 		"mnemos://session/current": true,
 		"mnemos://skills/index":    true,
 		"mnemos://stats":           true,
+		"mnemos://capabilities":    true,
 	}
 	for _, r := range res.Resources {
 		delete(wantURIs, r.URI)

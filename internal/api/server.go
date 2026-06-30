@@ -64,6 +64,7 @@ func NewServer(cfg Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
 
 	// Observations ---------------------------------------------------
 	mux.Handle("POST /v1/observations", jsonIn(
@@ -221,6 +222,14 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) healthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// capabilities reports which parts of the mcp-memory-spec this store satisfies
+// right now. Unauthenticated by design: capability discovery is negotiation
+// that precedes auth, and the document exposes only which features are live,
+// nothing sensitive.
+func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.mem.Capabilities())
 }
 
 // Serve runs the HTTP server until ctx is cancelled. Uses errgroup to

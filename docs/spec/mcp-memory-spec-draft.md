@@ -196,7 +196,7 @@ A conformance test suite is part of the deliverable, not prose. The credibility 
 | `memory/invalidate` | `mnemos_link` with `supersedes`, or hard `mnemos_delete` for mistakes |
 | `memory/promote` | `mnemos_promote` |
 | `memory/provenance` | carried inline on `mnemos_search` hits (`source_kind`, `trust_tier`, `derived_from`); a dedicated call is **(open)** |
-| `memory/capabilities` | **(open)**. Today `/healthz` returns `{ok:true}` and `mnemos_stats` exposes `embedding.enabled`; a real capabilities endpoint is unbuilt |
+| `memory/capabilities` | `mnemos://capabilities` resource (MCP) and unauthenticated `GET /v1/capabilities` (HTTP). Returns `{spec, implementation, tiers[], <capability flags>}` with tiers derived from live behaviour. Tier names are provisional pending §12.4 |
 
 ## 11. Versioning and extension governance
 

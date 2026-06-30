@@ -209,6 +209,7 @@ Counts, top tags, recent sessions. When rumination is enabled, the response also
 - `mnemos://session/current` — most recent open session
 - `mnemos://skills/index` — all skills (slim)
 - `mnemos://stats` — system statistics
+- `mnemos://capabilities` — live `mcp-memory-spec` conformance: the spec version, derived conformance tiers, and per-capability flags (bi-temporal, provenance, trust tiers, typed links, deterministic dedup, hybrid retrieval, federation). Tiers are derived from live behaviour, not hardcoded: a hybrid-capable store drops the embeddings tier when its embedder is unavailable. Also served unauthenticated over HTTP at `GET /v1/capabilities` for pre-auth discovery.
 
 ## Safety
 

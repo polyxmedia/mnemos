@@ -185,7 +185,7 @@ args    = ["serve"]
 
 ### Any MCP-compatible client
 
-Stdio: point the client at `mnemos serve`. The server advertises 17 tools and 3 resources on the `initialize` handshake (21 tools when rumination is enabled).
+Stdio: point the client at `mnemos serve`. The server advertises 17 tools and 4 resources on the `initialize` handshake (21 tools when rumination is enabled).
 
 ### HTTP transport
 

@@ -254,8 +254,8 @@ func TestResourcesAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Resources) != 3 {
-		t.Errorf("want 3 resources, got %d", len(res.Resources))
+	if len(res.Resources) != 4 {
+		t.Errorf("want 4 resources, got %d", len(res.Resources))
 	}
 
 	read, err := h.client.ReadResource(context.Background(), &mcpsdk.ReadResourceParams{
@@ -266,6 +266,19 @@ func TestResourcesAvailable(t *testing.T) {
 	}
 	if len(read.Contents) == 0 || read.Contents[0].Text == "" {
 		t.Error("stats resource returned empty content")
+	}
+
+	caps, err := h.client.ReadResource(context.Background(), &mcpsdk.ReadResourceParams{
+		URI: "mnemos://capabilities",
+	})
+	if err != nil {
+		t.Fatalf("read capabilities resource: %v", err)
+	}
+	if len(caps.Contents) == 0 {
+		t.Fatal("capabilities resource returned no content")
+	}
+	if !strings.Contains(caps.Contents[0].Text, "memory-core") {
+		t.Errorf("capabilities resource must report the memory-core tier, got %q", caps.Contents[0].Text)
 	}
 }
 

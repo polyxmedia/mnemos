@@ -89,6 +89,38 @@ func TestAuthRequired(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesOpenAndHonest(t *testing.T) {
+	ts := newAPIServer(t, "secret")
+	// Discovery precedes auth: reachable with no token even though a key is set.
+	code, out := request(t, ts, "GET", "/v1/capabilities", "", nil)
+	if code != 200 {
+		t.Fatalf("capabilities must be open for discovery, got %d", code)
+	}
+	if out["spec"] != "mcp-memory-spec/draft-0" {
+		t.Errorf("expected spec field, got %v", out["spec"])
+	}
+	tiers, ok := out["tiers"].([]any)
+	if !ok || len(tiers) == 0 {
+		t.Fatalf("expected non-empty tiers, got %v", out["tiers"])
+	}
+	has := func(want string) bool {
+		for _, x := range tiers {
+			if s, _ := x.(string); s == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("memory-core") || !has("provenance") {
+		t.Errorf("expected memory-core and provenance tiers, got %v", tiers)
+	}
+	// The harness wires no embedder, so the embeddings tier must be absent.
+	// The advertised tier tracks behaviour, it is not a hardcoded string.
+	if has("embeddings") {
+		t.Errorf("embeddings tier must be absent without an embedder, got %v", tiers)
+	}
+}
+
 func TestSaveSearchRoundTrip(t *testing.T) {
 	ts := newAPIServer(t, "")
 	code, out := request(t, ts, "POST", "/v1/observations", "", map[string]any{
