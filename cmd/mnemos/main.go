@@ -44,6 +44,7 @@ var commands = map[string]handler{
 	"search":    runSearch,
 	"stats":     runStats,
 	"digest":    runDigest,
+	"efficacy":  runEfficacy,
 	"sessions":  runSessions,
 	"export":    runExport,
 	"import":    runImport,
@@ -89,6 +90,7 @@ Commands:
   search <query>         Search observations from the terminal
   stats                  Show memory statistics
   digest [--since 24h]   Activity summary: saves, surfacing, sessions, dreams
+  efficacy [--since]     Surfaced-vs-outcome: does surfacing memory go with sessions that end ok
   sessions               List recent sessions
   export [file]          Export all data as JSON
   import <file>          Import data from JSON
