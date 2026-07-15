@@ -238,9 +238,13 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, ag
 	if prompt == "" || d == nil {
 		return
 	}
+	// PreferProject, not Project: a hard filter would drop project-less
+	// global conventions. Soft affinity downranks other projects' memories
+	// so they only surface when strongly on-topic.
 	hits, err := d.mem.Search(ctx, memory.SearchInput{
-		Query: prompt,
-		Limit: promptMemoryMaxHits,
+		Query:         prompt,
+		PreferProject: project,
+		Limit:         promptMemoryMaxHits,
 	})
 	if err != nil || len(hits) == 0 {
 		return

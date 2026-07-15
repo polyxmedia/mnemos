@@ -329,6 +329,17 @@ func (s *Service) Promote(ctx context.Context, in PromoteInput) error {
 	return s.store.SetTrustTier(ctx, in.ID, in.ToTier)
 }
 
+// crossProjectPenalty is the score multiplier applied to a hit whose project
+// differs from SearchInput.PreferProject. Calibrated against real BM25
+// magnitudes, not intuition: ftsEscape ORs every prompt token with prefix
+// match, so on conversational prompts even irrelevant memories score raw
+// 4-14 (stopwords match everything). At 0.1, a cross-project hit needs raw
+// BM25 ~20+ — a near-exact multi-token match — to clear the prompt hook's
+// 1.5 floor; keyword collisions land near 1.0 and are suppressed.
+// Motivated by the injection log through 2026-07-13: 83% of prompt_hook
+// surfacings (4982 of 6016) were cross-project noise.
+const crossProjectPenalty = 0.1
+
 // Search runs BM25 retrieval, optionally fuses with vector similarity via
 // Reciprocal Rank Fusion, and applies the recency/importance/access ranker
 // on top. Hybrid mode activates automatically when an embedder is
@@ -368,6 +379,10 @@ func (s *Service) SearchWithMode(ctx context.Context, in SearchInput) ([]SearchR
 	}
 	for i := range raw {
 		raw[i].Score = s.ranker.Score(raw[i].Observation, raw[i].Score, now)
+		if in.PreferProject != "" && raw[i].Observation.Project != "" &&
+			raw[i].Observation.Project != in.PreferProject {
+			raw[i].Score *= crossProjectPenalty
+		}
 	}
 	sort.SliceStable(raw, func(i, j int) bool { return raw[i].Score > raw[j].Score })
 

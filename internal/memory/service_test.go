@@ -190,6 +190,64 @@ func TestContextRespectsTokenBudget(t *testing.T) {
 	}
 }
 
+func TestSearchPreferProjectDownranksCrossProject(t *testing.T) {
+	svc := newService(t, nil)
+	ctx := context.Background()
+
+	// Identical relevance and importance; only the project differs.
+	other, _ := svc.Save(ctx, memory.SaveInput{
+		Title: "Other project", Content: "pattern about sqlite indexing",
+		Type: memory.TypePattern, Importance: 5, Project: "wayframer",
+	})
+	same, _ := svc.Save(ctx, memory.SaveInput{
+		Title: "Same project", Content: "pattern about sqlite indexing",
+		Type: memory.TypePattern, Importance: 5, Project: "taken",
+	})
+	global, _ := svc.Save(ctx, memory.SaveInput{
+		Title: "Global", Content: "pattern about sqlite indexing",
+		Type: memory.TypePattern, Importance: 5,
+	})
+
+	results, err := svc.Search(ctx, memory.SearchInput{
+		Query:         "sqlite indexing",
+		PreferProject: "taken",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("want 3 results, got %d", len(results))
+	}
+	if results[2].Observation.ID != other.Observation.ID {
+		t.Errorf("cross-project hit should rank last, got %s", results[2].Observation.Title)
+	}
+	scores := map[string]float64{}
+	for _, r := range results {
+		scores[r.Observation.ID] = r.Score
+	}
+	if scores[other.Observation.ID] >= scores[same.Observation.ID] {
+		t.Error("cross-project score should be penalized below same-project")
+	}
+	if scores[global.Observation.ID] < scores[same.Observation.ID] {
+		t.Error("project-less (global) hit must not be penalized")
+	}
+
+	// Without PreferProject the same query applies no penalty.
+	unbiased, err := svc.Search(ctx, memory.SearchInput{Query: "sqlite indexing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uscores := map[string]float64{}
+	for _, r := range unbiased {
+		uscores[r.Observation.ID] = r.Score
+	}
+	// Timestamps differ by milliseconds so scores are not exactly equal;
+	// assert no penalty-sized gap rather than float equality.
+	if uscores[other.Observation.ID] < uscores[same.Observation.ID]*0.9 {
+		t.Error("without PreferProject, no cross-project penalty should apply")
+	}
+}
+
 func TestDecayParamsShapeScore(t *testing.T) {
 	r := memory.NewRanker(memory.DefaultRankParams())
 	now := time.Now().UTC()

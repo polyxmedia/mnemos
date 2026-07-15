@@ -243,6 +243,7 @@ type SearchInput struct {
 	Query         string
 	AgentID       string
 	Project       string
+	PreferProject string // soft affinity: downrank hits from OTHER projects instead of excluding them; project-less hits are global and never penalized. Moot when Project is set (hard filter).
 	Type          ObsType
 	Tags          []string
 	MinImportance int
