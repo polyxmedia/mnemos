@@ -144,11 +144,14 @@ func TestGateAdmitsRecurrenceAfterSurfacing(t *testing.T) {
 	first := f.seedCorrection(t, "api", "oauth", "oauth retry a", s1)
 	f.seedCorrection(t, "api", "oauth", "oauth retry b", s2)
 
-	// The first correction gets surfaced into context...
+	// The first correction gets surfaced into context. Backdated a minute:
+	// the gate needs the recurrence saved strictly After() the surfacing,
+	// and on Windows the wall clock ticks coarsely enough that "now" here
+	// and the correction's created_at below can be identical.
 	err := f.db.Injections().Record(ctx, []injection.Event{{
 		ID: ulid.Make().String(), Kind: injection.KindObservation, RefID: first,
 		Channel: injection.ChannelPrewarm, Project: "api",
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: time.Now().UTC().Add(-time.Minute),
 	}})
 	if err != nil {
 		t.Fatal(err)
