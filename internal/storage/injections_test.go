@@ -80,6 +80,92 @@ func TestInjectionsRecordAndListByRef(t *testing.T) {
 	}
 }
 
+func TestRecentRefIDsFiltersByWindowChannelAndProject(t *testing.T) {
+	db := openInjDB(t)
+	store := db.Injections()
+	ctx := context.Background()
+
+	// Explicit timestamps: the window boundary is the whole point of the
+	// query, and CURRENT_TIMESTAMP second-precision would blur it.
+	base := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	mk := func(refID string, ch injection.Channel, project string, at time.Time) injection.Event {
+		return injection.Event{
+			ID: ulid.Make().String(), Kind: injection.KindObservation, RefID: refID,
+			Channel: ch, AgentID: "default", Project: project, CreatedAt: at,
+		}
+	}
+	if err := store.Record(ctx, []injection.Event{
+		mk("fresh", injection.ChannelPromptHook, "taken", base),
+		mk("stale", injection.ChannelPromptHook, "taken", base.Add(-3*time.Hour)),
+		mk("otherproj", injection.ChannelPromptHook, "wayframer", base),
+		mk("prewarmed", injection.ChannelPrewarm, "taken", base),
+		mk("pretooled", injection.ChannelPreTool, "taken", base),
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	since := base.Add(-injection.SuppressWindow)
+	got, err := store.RecentRefIDs(ctx, injection.KindObservation, "taken", since, nil)
+	if err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	set := map[string]bool{}
+	for _, id := range got {
+		set[id] = true
+	}
+
+	if !set["fresh"] || !set["pretooled"] {
+		t.Errorf("in-window refs must be returned, got %v", got)
+	}
+	if !set["prewarmed"] {
+		t.Error("prewarm puts the fact in context too, so it must suppress a later re-injection")
+	}
+	if set["stale"] {
+		t.Error("ref outside the window must not suppress: it has aged out of context")
+	}
+	if set["otherproj"] {
+		t.Error("another project's surfacing must not suppress this project's")
+	}
+}
+
+func TestRecentRefIDsCanScopeToChannels(t *testing.T) {
+	db := openInjDB(t)
+	store := db.Injections()
+	ctx := context.Background()
+
+	base := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	if err := store.Record(ctx, []injection.Event{
+		{
+			ID: ulid.Make().String(), Kind: injection.KindObservation, RefID: "hooked",
+			Channel: injection.ChannelPromptHook, Project: "taken", CreatedAt: base,
+		},
+		{
+			ID: ulid.Make().String(), Kind: injection.KindObservation, RefID: "warmed",
+			Channel: injection.ChannelPrewarm, Project: "taken", CreatedAt: base,
+		},
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	got, err := store.RecentRefIDs(ctx, injection.KindObservation, "taken",
+		base.Add(-time.Hour), []injection.Channel{injection.ChannelPromptHook})
+	if err != nil {
+		t.Fatalf("recent: %v", err)
+	}
+	if len(got) != 1 || got[0] != "hooked" {
+		t.Errorf("channel filter ignored: want [hooked], got %v", got)
+	}
+}
+
+func TestSuppressedIsEmptyOnNilStore(t *testing.T) {
+	// Suppression is an optimisation. If it cannot run, memory must still
+	// reach the agent rather than being silently filtered out.
+	got := injection.Suppressed(context.Background(), nil, injection.KindObservation, "taken", time.Now())
+	if len(got) != 0 {
+		t.Errorf("nil store must yield an empty set, got %v", got)
+	}
+}
+
 func TestInjectionsRecordEmptyIsNoop(t *testing.T) {
 	db := openInjDB(t)
 	if err := db.Injections().Record(context.Background(), nil); err != nil {

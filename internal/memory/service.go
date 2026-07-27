@@ -495,6 +495,34 @@ func (s *Service) Context(ctx context.Context, in ContextInput) (*ContextBlock, 
 	return block, nil
 }
 
+// RecordSurfaced bumps access_count for memories that actually reached the
+// agent's context. Best-effort and idempotent-ish by design: a failure on
+// one ID does not stop the rest, and the error is advisory.
+//
+// Until this existed, access_count only moved on an explicit Get, which no
+// hook path calls — 9543 injections across 603 sessions left all 59 stored
+// memories on access_count = 0. That made Ranker.Score's access term
+// 1 + AccessBoost*ln(1+0), a constant 1.0, so a signal the ranker was
+// designed around had never once fired.
+//
+// Callers must pass only memories that survived suppression, never every
+// candidate considered. Suppression caps a memory at one surfacing per
+// project per injection.SuppressWindow, which is what keeps this from
+// becoming a rich-get-richer loop where a memory ranks high because it was
+// injected often and gets injected often because it ranks high.
+func (s *Service) RecordSurfaced(ctx context.Context, ids []string) error {
+	var firstErr error
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if err := s.store.BumpAccess(ctx, id); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("record surfaced %s: %w", id, err)
+		}
+	}
+	return firstErr
+}
+
 // Stats proxies to the store and tags live/total counts.
 func (s *Service) Stats(ctx context.Context) (Stats, error) {
 	return s.store.Stats(ctx)
