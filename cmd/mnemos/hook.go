@@ -249,11 +249,22 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, ag
 	if err != nil || len(hits) == 0 {
 		return
 	}
+	// Suppress memories already surfaced into this project's context in the
+	// last window. Without this the same three memories ride along on every
+	// single prompt for as long as the topic holds — 6879 prompt_hook
+	// injections drew on 61 distinct memories before this existed.
+	injStore := d.db.Injections()
+	suppressed := injection.Suppressed(ctx, injStore, injection.KindObservation, project, time.Now())
+
 	kept := hits[:0]
 	for _, h := range hits {
-		if h.Score >= promptMemoryMinScore {
-			kept = append(kept, h)
+		if h.Score < promptMemoryMinScore {
+			continue
 		}
+		if _, dup := suppressed[h.Observation.ID]; dup {
+			continue
+		}
+		kept = append(kept, h)
 	}
 	if len(kept) == 0 {
 		return
@@ -275,8 +286,18 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, ag
 		fmt.Fprintf(w, "- [%s] %s — %s\n", h.Observation.Type, title, snippet)
 		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: h.Observation.ID})
 	}
-	_ = injection.NewLogger(d.db.Injections(), nil).
+	_ = injection.NewLogger(injStore, nil).
 		Log(ctx, injection.ChannelPromptHook, agentID, project, sessionID, refs)
+	_ = d.mem.RecordSurfaced(ctx, refIDs(refs))
+}
+
+// refIDs projects injection refs down to their bare IDs for RecordSurfaced.
+func refIDs(refs []injection.Ref) []string {
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, r.ID)
+	}
+	return out
 }
 
 // truncateGoal folds whitespace and caps to maxAutoGoalChars, appending an
@@ -568,6 +589,9 @@ func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 	}
 
 	injStore := d.db.Injections()
+	proj := projectFromHook(in)
+	suppressed := injection.Suppressed(ctx, injStore, injection.KindObservation, proj, time.Now())
+
 	var kept []memory.SearchResult
 	for _, h := range hits {
 		if h.Observation.Type != memory.TypeCorrection && h.Observation.Type != memory.TypeConvention {
@@ -576,7 +600,7 @@ func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 		if h.Score < promptMemoryMinScore {
 			continue
 		}
-		if alreadyInjectedInSession(ctx, injStore, h.Observation.ID, sessID) {
+		if _, dup := suppressed[h.Observation.ID]; dup {
 			continue
 		}
 		kept = append(kept, h)
@@ -613,7 +637,8 @@ func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 		return
 	}
 	_ = injection.NewLogger(injStore, nil).
-		Log(ctx, injection.ChannelPreTool, agentID, projectFromHook(in), sessID, refs)
+		Log(ctx, injection.ChannelPreTool, agentID, proj, sessID, refs)
+	_ = d.mem.RecordSurfaced(ctx, refIDs(refs))
 }
 
 // pathQueryTokens turns a file path into a search query: the last few
@@ -637,25 +662,6 @@ func pathQueryTokens(p string) string {
 		}
 	}
 	return strings.Join(toks, " ")
-}
-
-// alreadyInjectedInSession reports whether the observation was surfaced
-// into the given session through any channel. Used as a spam guard:
-// repeated edits to the same file should not re-inject the same memory.
-func alreadyInjectedInSession(ctx context.Context, store injection.Store, refID, sessionID string) bool {
-	if sessionID == "" {
-		return false
-	}
-	events, err := store.ListByRef(ctx, injection.KindObservation, refID, 50)
-	if err != nil {
-		return false
-	}
-	for _, e := range events {
-		if e.SessionID == sessionID {
-			return true
-		}
-	}
-	return false
 }
 
 // decidePreTool is the pure-function core of the PreToolUse guardrail.

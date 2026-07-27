@@ -92,6 +92,52 @@ type Store interface {
 	Record(ctx context.Context, events []Event) error
 	// ListByRef returns the surfacing history for one memory, newest first.
 	ListByRef(ctx context.Context, kind Kind, refID string, limit int) ([]Event, error)
+	// RecentRefIDs returns the ref IDs of the given kind surfaced through
+	// any of the given channels since the cutoff, scoped to project when
+	// project is non-empty. Backs re-injection suppression.
+	RecentRefIDs(ctx context.Context, kind Kind, project string, since time.Time, channels []Channel) ([]string, error)
+}
+
+// SuppressWindow is how long a surfaced memory stays suppressed from the
+// repeating channels. Once a fact is in the agent's context it stays there
+// until compaction, so re-injecting it every prompt or every file edit
+// buys nothing and costs tokens on every turn. Two hours is long enough to
+// cover a working stretch and short enough that a post-compaction context
+// gets the fact back.
+//
+// Sized against real data: over 2026-07-24 a single memory was injected
+// into one project 352 times in a day through pre_tool alone, because the
+// only suppression rule keyed on a session ID that was absent 96% of the
+// time. A wall-clock window has no such dependency.
+const SuppressWindow = 2 * time.Hour
+
+// Suppressed returns the set of ref IDs surfaced into this project's
+// context recently enough that surfacing them again would be a duplicate.
+//
+// Every channel counts as evidence that the fact is already in context,
+// including prewarm and recovery: a memory the SessionStart block just
+// stated does not need restating by the first prompt ten seconds later.
+// Which channels are *subject* to suppression is decided by the call
+// sites, and only the two high-frequency ones (prompt_hook, pre_tool) ask.
+// prewarm and recovery deliberately never ask, because both fire at
+// context boundaries where restating a memory is the entire point.
+//
+// A nil store or any query error yields an empty set: suppression is an
+// optimisation, and failing to suppress must never stop a memory from
+// reaching the agent.
+func Suppressed(ctx context.Context, store Store, kind Kind, project string, now time.Time) map[string]struct{} {
+	out := map[string]struct{}{}
+	if store == nil {
+		return out
+	}
+	ids, err := store.RecentRefIDs(ctx, kind, project, now.Add(-SuppressWindow), nil)
+	if err != nil {
+		return out
+	}
+	for _, id := range ids {
+		out[id] = struct{}{}
+	}
+	return out
 }
 
 // Logger stamps IDs and timestamps onto refs and writes them as events.

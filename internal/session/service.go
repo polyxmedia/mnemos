@@ -96,19 +96,47 @@ func (s *Service) ListOpen(ctx context.Context, project string) ([]Session, erro
 	return s.store.ListOpen(ctx, project)
 }
 
-// CloseAllOpen closes every open session for a project with the same
-// summary/status/tags and returns how many it closed. in.ID is ignored.
+// TwinWindow bounds how far apart two open sessions for the same project
+// may start and still be considered the same terminal's twins. SessionStart
+// hooks installed at both user and project scope fire within milliseconds
+// of each other, so anything inside this window is a duplicate of one
+// terminal launch. Mirrors the prewarm adoption window.
+const TwinWindow = 90 * time.Second
+
+// CloseAllOpen closes the newest open session for a project plus any twin
+// that started within TwinWindow of it, and returns how many it closed.
+// in.ID is ignored.
+//
 // SessionStart hooks installed at both user and project scope each open a
-// session, so SessionEnd must close the set, not just the newest — closing
-// one and leaving its twin open is how the store accumulated hundreds of
-// never-ended sessions.
+// session, so SessionEnd must close the set rather than just the newest —
+// closing one and leaving its twin open is how the store accumulated
+// hundreds of never-ended sessions.
+//
+// The window is what keeps that from overreaching. Closing every open
+// session for the project meant a second terminal working in the same repo
+// lost its session the moment the first one exited: on 2026-07-24 two
+// taken sessions were closed together at 09:49, and the still-live
+// terminal then ran until 23:00 with no session, which cost every
+// downstream injection its session attribution. Sessions older than the
+// window belong to somebody else; the 24h stale sweep collects them if
+// their terminal really is gone.
 func (s *Service) CloseAllOpen(ctx context.Context, project string, in CloseInput) (int, error) {
 	open, err := s.store.ListOpen(ctx, project)
 	if err != nil {
 		return 0, err
 	}
+	if len(open) == 0 {
+		return 0, nil
+	}
+	// ListOpen is ordered started_at DESC, so open[0] is the newest and the
+	// most likely owner of the SessionEnd that got us here.
+	cutoff := open[0].StartedAt.Add(-TwinWindow)
+
 	closed := 0
 	for _, sess := range open {
+		if sess.StartedAt.Before(cutoff) {
+			continue
+		}
 		ci := in
 		ci.ID = sess.ID
 		if err := s.store.Close(ctx, ci); err != nil {

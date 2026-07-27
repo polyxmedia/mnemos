@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/polyxmedia/mnemos/internal/injection"
 )
@@ -60,6 +62,43 @@ func (s *injStore) Record(ctx context.Context, events []injection.Event) error {
 		return fmt.Errorf("record injections: commit: %w", err)
 	}
 	return nil
+}
+
+// RecentRefIDs returns the distinct ref IDs of the given kind surfaced
+// through any of channels since the cutoff. An empty project matches every
+// project; an empty channel list matches every channel. Ordering is
+// unspecified — callers build a set from the result.
+func (s *injStore) RecentRefIDs(ctx context.Context, kind injection.Kind, project string, since time.Time, channels []injection.Channel) ([]string, error) {
+	query := `SELECT DISTINCT ref_id FROM injections
+	           WHERE kind = ? AND created_at >= ?`
+	args := []any{string(kind), since.UTC()}
+
+	if project != "" {
+		query += ` AND project = ?`
+		args = append(args, project)
+	}
+	if len(channels) > 0 {
+		query += ` AND channel IN (?` + strings.Repeat(`, ?`, len(channels)-1) + `)`
+		for _, c := range channels {
+			args = append(args, string(c))
+		}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("recent ref ids: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan recent ref id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (s *injStore) ListByRef(ctx context.Context, kind injection.Kind, refID string, limit int) ([]injection.Event, error) {
