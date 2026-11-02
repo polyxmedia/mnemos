@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/polyxmedia/mnemos/internal/injection"
@@ -45,7 +44,7 @@ func runPrewarm(ctx context.Context, args []string) error {
 	}
 	fs := flag.NewFlagSet("prewarm", flag.ContinueOnError)
 	var (
-		project     = fs.String("project", "", "project name (default: basename of cwd)")
+		project     = fs.String("project", "", "project name (default: the git repo of cwd, else its basename)")
 		goal        = fs.String("goal", "", "optional goal")
 		mode        = fs.String("mode", "session_start", "session_start | compaction_recovery")
 		format      = fs.String("format", "text", "text | json")
@@ -71,8 +70,8 @@ func runPrewarm(ctx context.Context, args []string) error {
 		}
 	}
 	proj := *project
-	if proj == "" && cwd != "" {
-		proj = filepath.Base(cwd)
+	if proj == "" {
+		proj = projectFromCWD(cwd)
 	}
 
 	d, err := loadDeps(ctx)
@@ -93,19 +92,21 @@ func runPrewarm(ctx context.Context, args []string) error {
 	})
 
 	var sessID string
+	var arm session.RetrievalArm
 	if *openSession && pwMode == prewarm.ModeSessionStart {
 		if sess := adoptableOpenSession(ctx, d, in.SessionID, proj); sess != nil {
-			sessID = sess.ID
+			sessID, arm = sess.ID, sess.RetrievalArm
 		} else if sess, err := d.sess.Open(ctx, session.OpenInput{
 			Project: proj, Goal: *goal, HostSessionID: in.SessionID,
+			RetrievalArm: session.AssignArm(d.cfg.Retrieval.Mode, in.SessionID),
 		}); err == nil {
-			sessID = sess.ID
+			sessID, arm = sess.ID, sess.RetrievalArm
 		}
 	} else if pwMode == prewarm.ModeCompactionRecovery {
 		// Recovery restores the state of the session that was compacted:
 		// the one SessionStart opened for this host conversation.
 		if sess, err := d.sess.Resolve(ctx, in.SessionID, proj); err == nil && sess != nil {
-			sessID = sess.ID
+			sessID, arm = sess.ID, sess.RetrievalArm
 		}
 	}
 
@@ -119,6 +120,15 @@ func runPrewarm(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	// The index goes out after compaction too: it is the only way this arm
+	// reaches memory, and a compacted context has lost the first copy.
+	var memoryIndex string
+	if arm == session.ArmIndex {
+		if text, err := pw.MemoryIndex(ctx, "", proj); err == nil {
+			memoryIndex = text
+		}
+	}
+
 	switch *format {
 	case "json":
 		out := map[string]any{
@@ -129,6 +139,7 @@ func runPrewarm(ctx context.Context, args []string) error {
 			"token_estimate": block.TokenEstimate,
 			"section_count":  len(block.Sections),
 			"safety_risk":    block.SafetyReport.MaxRisk.String(),
+			"memory_index":   memoryIndex,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -136,6 +147,9 @@ func runPrewarm(ctx context.Context, args []string) error {
 	case "text":
 		if block.Text != "" {
 			fmt.Println(block.Text)
+		}
+		if memoryIndex != "" {
+			fmt.Printf("\n%s\n", memoryIndex)
 		}
 		if sessID != "" {
 			fmt.Printf("\nmnemos_session_id: %s\n", sessID)

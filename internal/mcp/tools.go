@@ -10,8 +10,10 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/native"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/rumination"
+	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
@@ -38,12 +40,13 @@ func (s *Server) registerTools() {
 			"project to surface prior decisions, conventions, and corrections. Skipping risks repeating " +
 			"known mistakes already recorded. Hybrid BM25 + vector ranked search with recency/importance/" +
 			"access multipliers. Default scope is valid-now (invalidated/expired hidden). " +
-			"Cheap; call liberally with the user's request as the query.",
+			"Cheap; call liberally with the user's request as the query." + s.nativeSearchNote(),
 	}, s.handleSearch)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
-		Name:        "mnemos_get",
-		Description: "Fetch a full observation by ID. Bumps the access counter.",
+		Name: "mnemos_get",
+		Description: "Fetch a full memory by ID, by the 8-character handle shown in the memory index, " +
+			"or by a native: ID from mnemos_search. Bumps the access counter on saved memories.",
 	}, s.handleGet)
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
@@ -318,7 +321,77 @@ func (s *Server) handleSearch(ctx context.Context, _ *mcpsdk.CallToolRequest, a 
 			"derived_from": r.Observation.DerivedFrom,
 		})
 	}
-	return jsonResult(map[string]any{"results": hits, "retrieval_mode": string(mode)})
+	out := map[string]any{"results": hits, "retrieval_mode": string(mode)}
+	if notes := s.searchNotes(ctx, a); len(notes) > 0 {
+		out["native_memory"] = notes
+		out["native_memory_note"] = nativeMemoryNote
+	}
+	return jsonResult(out)
+}
+
+// nativeMemoryNote travels with note results because they are a different
+// kind of source: another session's working notes, kept by another tool.
+const nativeMemoryNote = "Read-only auto memory notes, searched across every repo. " +
+	"They can be out of date: check modified_at and verify before relying on one. " +
+	"Open a full note with mnemos_get and its id."
+
+// nativeSearchLimit keeps notes from crowding out saved memories.
+const nativeSearchLimit = 5
+
+// nativeSearchNote extends the mnemos_search description when notes are on.
+func (s *Server) nativeSearchNote() string {
+	if s.cfg.Native == nil {
+		return ""
+	}
+	return " Also searches Claude Code auto memory notes across every repo, returned under " +
+		"native_memory, so it finds what was learned in other projects."
+}
+
+// searchNotes adds matching notes to a search. Notes ignore the project filter
+// on purpose: reaching other repos is why they are here. A search narrowed by
+// type, tags or time asks for a slice of saved memories that notes do not have,
+// so those skip them. Best effort: a failure here must not fail the search.
+func (s *Server) searchNotes(ctx context.Context, a searchArgs) []map[string]any {
+	if s.cfg.Native == nil || a.Type != "" || len(a.Tags) > 0 || a.AsOf != "" {
+		return nil
+	}
+	hits, err := s.cfg.Native.Search(ctx, a.Query, nativeSearchLimit)
+	if err != nil {
+		s.cfg.Logger.Warn("native memory search failed", "err", err)
+		return nil
+	}
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		note := map[string]any{
+			"id":          h.ID,
+			"project":     h.Project,
+			"name":        s.safeNoteText(h.Name),
+			"description": s.safeNoteText(h.Description),
+			"type":        s.safeNoteText(h.DocType),
+			"modified_at": h.ModifiedAt,
+			"snippet":     s.safeNoteText(h.Snippet),
+		}
+		if len(h.AlsoIn) > 0 {
+			also := make([]map[string]string, 0, len(h.AlsoIn))
+			for _, ref := range h.AlsoIn {
+				also = append(also, map[string]string{"id": ref.ID, "project": ref.Project})
+			}
+			note["also_in"] = also
+		}
+		out = append(out, note)
+	}
+	return out
+}
+
+// safeNoteText scans note text before it reaches an agent. A note written in
+// one repo while reading untrusted content can carry an injected instruction,
+// and this search moves it into a session working on something else.
+func (s *Server) safeNoteText(text string) string {
+	report := s.noteScanner.Scan(text)
+	if report.MaxRisk >= safety.RiskHigh {
+		return safety.WrapFlagged(report.Sanitised, report)
+	}
+	return report.Sanitised
 }
 
 // ---- mnemos_get / delete / link ---------------------------------------
@@ -328,6 +401,9 @@ type idArgs struct {
 }
 
 func (s *Server) handleGet(ctx context.Context, _ *mcpsdk.CallToolRequest, a idArgs) (*mcpsdk.CallToolResult, any, error) {
+	if strings.HasPrefix(a.ID, native.IDPrefix) {
+		return s.getNote(ctx, a.ID)
+	}
 	o, err := s.cfg.Memory.Get(ctx, a.ID)
 	if err != nil {
 		if errors.Is(err, memory.ErrNotFound) {
@@ -336,6 +412,27 @@ func (s *Server) handleGet(ctx context.Context, _ *mcpsdk.CallToolRequest, a idA
 		return nil, nil, err
 	}
 	return jsonResult(o)
+}
+
+func (s *Server) getNote(ctx context.Context, id string) (*mcpsdk.CallToolResult, any, error) {
+	if s.cfg.Native == nil {
+		return nil, nil, fmt.Errorf("native memory index is off: %s", id)
+	}
+	doc, err := s.cfg.Native.Get(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{
+		"id":          doc.ID,
+		"source":      "native_memory",
+		"project":     doc.Project,
+		"path":        doc.Path,
+		"name":        s.safeNoteText(doc.Name),
+		"description": s.safeNoteText(doc.Description),
+		"type":        s.safeNoteText(doc.DocType),
+		"modified_at": doc.ModifiedAt,
+		"content":     s.safeNoteText(doc.Body),
+	})
 }
 
 func (s *Server) handleDelete(ctx context.Context, _ *mcpsdk.CallToolRequest, a idArgs) (*mcpsdk.CallToolResult, any, error) {

@@ -40,33 +40,35 @@ func main() {
 type handler func(ctx context.Context, args []string) error
 
 var commands = map[string]handler{
-	"serve":     runServe,
-	"search":    runSearch,
-	"stats":     runStats,
-	"digest":    runDigest,
-	"efficacy":  runEfficacy,
-	"sessions":  runSessions,
-	"export":    runExport,
-	"import":    runImport,
-	"prune":     runPrune,
-	"dream":     runDream,
-	"vault":     runVault,
-	"embed":     runEmbed,
-	"skill":     runSkill,
-	"replay":    runReplay,
-	"prewarm":   runPrewarm,
-	"hook":      runHook,
-	"version":   runVersion,
-	"config":    runConfig,
-	"init":      runInit,
-	"update":    runUpdate,
-	"doctor":    runDoctor,
-	"verify":    runVerify,
-	"-v":        runVersion,
-	"--version": runVersion,
-	"-h":        runHelp,
-	"--help":    runHelp,
-	"help":      runHelp,
+	"serve":      runServe,
+	"search":     runSearch,
+	"stats":      runStats,
+	"digest":     runDigest,
+	"efficacy":   runEfficacy,
+	"experiment": runExperiment,
+	"native":     runNative,
+	"sessions":   runSessions,
+	"export":     runExport,
+	"import":     runImport,
+	"prune":      runPrune,
+	"dream":      runDream,
+	"vault":      runVault,
+	"embed":      runEmbed,
+	"skill":      runSkill,
+	"replay":     runReplay,
+	"prewarm":    runPrewarm,
+	"hook":       runHook,
+	"version":    runVersion,
+	"config":     runConfig,
+	"init":       runInit,
+	"update":     runUpdate,
+	"doctor":     runDoctor,
+	"verify":     runVerify,
+	"-v":         runVersion,
+	"--version":  runVersion,
+	"-h":         runHelp,
+	"--help":     runHelp,
+	"help":       runHelp,
 }
 
 func runVersion(_ context.Context, _ []string) error {
@@ -91,6 +93,8 @@ Commands:
   stats                  Show memory statistics
   digest [--since 24h]   Activity summary: saves, surfacing, sessions, dreams
   efficacy [--since]     Surfaced-vs-outcome: does surfacing memory go with sessions that end ok
+  experiment [--since]   Compare the randomly assigned push and index arms
+  native [status|sync]   Read-only index of Claude Code auto memory notes
   sessions               List recent sessions
   export [file]          Export all data as JSON
   import <file>          Import data from JSON

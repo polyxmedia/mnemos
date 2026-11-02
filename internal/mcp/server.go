@@ -12,8 +12,10 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/native"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/rumination"
+	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
 )
@@ -23,10 +25,12 @@ import (
 type Server struct {
 	sdk *mcpsdk.Server
 	cfg Config
+	// noteScanner checks auto memory notes before they reach an agent.
+	noteScanner *safety.Scanner
 }
 
 // Config bundles the dependencies a Server needs. Every field except
-// Name, Version, Logger, and Rumination is required.
+// Name, Version, Logger, Rumination and Native is required.
 type Config struct {
 	Name        string
 	Version     string
@@ -39,10 +43,19 @@ type Config struct {
 	Logger      *slog.Logger
 	StorageSize func() (int64, error) // optional: reports storage_bytes in mnemos_stats
 	// DefaultProject is the project a write lands in when the tool call
-	// names none. serve sets it to the basename of the directory it was
-	// started in, which Claude Code and Codex both set to the project
-	// root. Empty keeps such writes project-less.
+	// names none. serve sets it to the name of the git repo it was started
+	// in, else the basename of that directory. Claude Code and Codex both
+	// start it in the project root. Empty keeps such writes project-less.
 	DefaultProject string
+	// Native is optional; when set, mnemos_search also returns matching auto
+	// memory notes from other repos and mnemos_get opens them.
+	Native NativeNotes
+}
+
+// NativeNotes is the read-only surface over Claude Code's auto memory notes.
+type NativeNotes interface {
+	Search(ctx context.Context, query string, limit int) ([]native.Hit, error)
+	Get(ctx context.Context, id string) (*native.Doc, error)
 }
 
 // NewServer constructs an MCP server with all Mnemos tools and resources
@@ -64,7 +77,7 @@ func NewServer(cfg Config) *Server {
 		Version: cfg.Version,
 	}, nil)
 
-	s := &Server{sdk: sdk, cfg: cfg}
+	s := &Server{sdk: sdk, cfg: cfg, noteScanner: safety.NewScanner()}
 	s.registerTools()
 	s.registerResources()
 	return s

@@ -101,7 +101,7 @@ func runServe(ctx context.Context, args []string) error {
 		return httpSrv.Serve(ctx, addr)
 	}
 
-	srv := mcp.NewServer(mcp.Config{
+	mcpCfg := mcp.Config{
 		Name:       "mnemos",
 		Version:    version.Version,
 		Memory:     mem,
@@ -119,7 +119,13 @@ func runServe(ctx context.Context, args []string) error {
 			return fi.Size(), nil
 		},
 		DefaultProject: serverProject(),
-	})
+	}
+	// Assigned only when enabled: a nil *native.Service in the interface
+	// would read as present.
+	if notes := newNativeService(cfg, db); notes != nil {
+		mcpCfg.Native = notes
+	}
+	srv := mcp.NewServer(mcpCfg)
 
 	logger.Info("mnemos serve (stdio)", "version", version.Version, "db", cfg.Storage.Path)
 	if err := srv.ServeStdio(ctx); err != nil {
@@ -128,17 +134,17 @@ func runServe(ctx context.Context, args []string) error {
 	return nil
 }
 
-// serverProject names the project writes default to: the basename of the
-// directory the server was started in. Claude Code and Codex start stdio
-// servers in the project root; a client that starts them in / or the home
-// directory has no project to offer, and writes stay project-less.
+// serverProject names the project writes default to: the git repo the server
+// was started in, else the basename of that directory. Claude Code and Codex
+// start stdio servers in the project root; a client that starts them in / or
+// the home directory has no project to offer, and writes stay project-less.
 func serverProject() string {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
 	home, _ := os.UserHomeDir()
-	return projectFromDir(cwd, home)
+	return projectFromDir(repoRoot(cwd, home), home)
 }
 
 // projectFromDir is serverProject's pure core.

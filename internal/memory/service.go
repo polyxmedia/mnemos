@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -264,9 +265,29 @@ func hashContent(t ObsType, parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Get returns the full observation (also bumps access count via the store).
+// HandleLen is the length of the short ID the memory index prints. ULIDs
+// spend their first ten characters on the timestamp, so the tail carries the
+// randomness, and a full ID costs about a dozen tokens per index line.
+const HandleLen = 8
+
+// Handle returns the short form of an observation ID.
+func Handle(id string) string {
+	if len(id) <= HandleLen {
+		return id
+	}
+	return id[len(id)-HandleLen:]
+}
+
+// Get returns the full observation by ID or index handle (also bumps access
+// count via the store).
 func (s *Service) Get(ctx context.Context, id string) (*Observation, error) {
-	return s.store.Get(ctx, id)
+	o, err := s.store.Get(ctx, id)
+	// The exact lookup goes first because imported data can carry IDs of any
+	// shape, including one as short as a handle.
+	if errors.Is(err, ErrNotFound) && len(id) == HandleLen {
+		return s.store.GetByHandle(ctx, id)
+	}
+	return o, err
 }
 
 // Delete removes an observation outright. Prefer Supersede for anything that

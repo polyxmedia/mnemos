@@ -47,6 +47,7 @@ func (s *Service) Open(ctx context.Context, in OpenInput) (*Session, error) {
 		StartedAt: s.clock().UTC(),
 
 		HostSessionID: in.HostSessionID,
+		RetrievalArm:  in.RetrievalArm,
 	}
 	if err := s.store.Insert(ctx, sess); err != nil {
 		return nil, err

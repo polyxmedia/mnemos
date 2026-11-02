@@ -213,9 +213,11 @@ Use `pkg/client` from Go or call `POST /v1/observations` directly. Reference: [d
 | `mnemos init` | Wire agent clients |
 | `mnemos doctor` | Verify install |
 | `mnemos prewarm` | Print session-start prewarm block |
-| `mnemos search <query>` | Search store |
+| `mnemos search <query>` | Search store, plus auto memory notes when the native index is on |
 | `mnemos stats` | Counts and tags |
 | `mnemos sessions` | Recent sessions |
+| `mnemos experiment [--since 720h] [--format json]` | Compare the push and index arms from transcripts |
+| `mnemos native status\|sync` | Read-only index of Claude Code auto memory notes |
 | `mnemos replay <session_id>` | Markdown recap of a past session |
 | `mnemos export [file]` | JSON dump |
 | `mnemos import <file>` | Restore from JSON |
@@ -274,6 +276,13 @@ stale_skill_floor         = 0.5
 correction_repeat_n       = 3
 contradiction_threshold   = 1
 
+[retrieval]
+mode = "push"               # push | index | experiment
+
+[native_memory]
+enabled = false             # read-only index of Claude Code auto memory
+roots   = []                # default: CLAUDE_CONFIG_DIR, else ~/.claude
+
 [server]
 transport = "stdio"
 http_addr = ":8080"
@@ -289,7 +298,9 @@ internal/storage      SQLite + FTS5 (modernc.org/sqlite), bi-temporal schema
 internal/memory       observations, hybrid ranker (BM25 + cosine via RRF)
 internal/session      session service
 internal/skills       procedural memory service
-internal/prewarm      session_start and compaction-recovery composers
+internal/prewarm      session_start and compaction-recovery composers, titles index
+internal/native       read-only index of Claude Code auto memory notes
+internal/experiment   push vs index comparison, measured from transcripts
 internal/safety       prompt-injection scanner
 internal/dream        consolidation daemon
 internal/rumination   threshold monitors, hostile-review packaging

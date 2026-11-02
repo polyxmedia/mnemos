@@ -16,7 +16,7 @@ func (d *DB) Sessions() session.Store { return &sessStore{db: d.sql} }
 
 type sessStore struct{ db *sql.DB }
 
-const sessColumns = `id, agent_id, project, goal, summary, reflection, status, outcome_tags, started_at, ended_at, host_session_id`
+const sessColumns = `id, agent_id, project, goal, summary, reflection, status, outcome_tags, started_at, ended_at, host_session_id, retrieval_arm`
 
 func (s *sessStore) Insert(ctx context.Context, sess *session.Session) error {
 	status := sess.Status
@@ -28,8 +28,8 @@ func (s *sessStore) Insert(ctx context.Context, sess *session.Session) error {
 		return fmt.Errorf("marshal outcome_tags: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO sessions (id, agent_id, project, goal, status, outcome_tags, started_at, host_session_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO sessions (id, agent_id, project, goal, status, outcome_tags, started_at, host_session_id, retrieval_arm)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
 		sess.AgentID,
 		nullableStr(sess.Project),
@@ -38,6 +38,7 @@ func (s *sessStore) Insert(ctx context.Context, sess *session.Session) error {
 		string(tags),
 		sess.StartedAt.UTC(),
 		nullableStr(sess.HostSessionID),
+		nullableStr(string(sess.RetrievalArm)),
 	)
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)
@@ -65,8 +66,8 @@ func (s *sessStore) Restore(ctx context.Context, sess *session.Session) (bool, e
 	}
 	res, err := s.db.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sessions
-			(id, agent_id, project, goal, summary, reflection, status, outcome_tags, started_at, ended_at, host_session_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+			(id, agent_id, project, goal, summary, reflection, status, outcome_tags, started_at, ended_at, host_session_id, retrieval_arm)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sess.ID,
 		agentID,
 		nullableStr(sess.Project),
@@ -78,6 +79,7 @@ func (s *sessStore) Restore(ctx context.Context, sess *session.Session) (bool, e
 		sess.StartedAt.UTC(),
 		nullableTime(sess.EndedAt),
 		nullableStr(sess.HostSessionID),
+		nullableStr(string(sess.RetrievalArm)),
 	)
 	if err != nil {
 		return false, fmt.Errorf("restore session: %w", err)
@@ -271,13 +273,13 @@ type scanner interface {
 
 func scanSession(row scanner) (*session.Session, error) {
 	var sess session.Session
-	var project, goal, summary, reflection, hostSessionID sql.NullString
+	var project, goal, summary, reflection, hostSessionID, arm sql.NullString
 	var status string
 	var outcomeTags string
 	var endedAt sql.NullTime
 	if err := row.Scan(
 		&sess.ID, &sess.AgentID, &project, &goal, &summary, &reflection,
-		&status, &outcomeTags, &sess.StartedAt, &endedAt, &hostSessionID,
+		&status, &outcomeTags, &sess.StartedAt, &endedAt, &hostSessionID, &arm,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, session.ErrNotFound
@@ -289,6 +291,7 @@ func scanSession(row scanner) (*session.Session, error) {
 	sess.Summary = summary.String
 	sess.Reflection = reflection.String
 	sess.HostSessionID = hostSessionID.String
+	sess.RetrievalArm = session.RetrievalArm(arm.String)
 	sess.Status = session.Status(status)
 	_ = json.Unmarshal([]byte(outcomeTags), &sess.OutcomeTags)
 	sess.EndedAt = nullableTimePtr(endedAt)

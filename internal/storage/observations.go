@@ -200,6 +200,44 @@ func (s *obsStore) Get(ctx context.Context, id string) (*memory.Observation, err
 	return o, nil
 }
 
+// GetByHandle finds an observation by the tail of its ID. Handles come from
+// the memory index and are matched case-insensitively, since a model may
+// retype one. Two rows with the same tail report ErrAmbiguousHandle instead
+// of returning either: opening the wrong memory silently is worse than a
+// failed lookup the agent can retry through search.
+func (s *obsStore) GetByHandle(ctx context.Context, handle string) (*memory.Observation, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM observations WHERE substr(id, -?) = ? LIMIT 2`,
+		len(handle), strings.ToUpper(handle))
+	if err != nil {
+		return nil, fmt.Errorf("get by handle: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("get by handle: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	// Drain before Get: the pool holds one connection, so an open cursor
+	// would deadlock the nested query.
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("get by handle: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get by handle: %w", err)
+	}
+	switch len(ids) {
+	case 0:
+		return nil, memory.ErrNotFound
+	case 1:
+		return s.Get(ctx, ids[0])
+	}
+	return nil, memory.ErrAmbiguousHandle
+}
+
 func (s *obsStore) BumpAccess(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE observations SET access_count = access_count + 1,

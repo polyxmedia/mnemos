@@ -21,6 +21,30 @@ type Config struct {
 	Vault      VaultConfig      `toml:"vault"`
 	Dream      DreamConfig      `toml:"dream"`
 	Rumination RuminationConfig `toml:"rumination"`
+	Retrieval  RetrievalConfig  `toml:"retrieval"`
+	Native     NativeConfig     `toml:"native_memory"`
+}
+
+// RetrievalConfig selects how sessions receive memory.
+type RetrievalConfig struct {
+	// Mode is "push" (prompt hook injects search hits), "index" (session
+	// starts with a titles-only index the agent pulls from) or "experiment"
+	// (each conversation is randomly assigned one of the two, and `mnemos
+	// experiment` compares them). An unknown value behaves as push, because
+	// a config typo must not silently switch every hook off.
+	Mode string `toml:"mode"`
+}
+
+// NativeConfig controls the read-only index of Claude Code's auto memory
+// notes. Off by default: it copies another tool's files into the mnemos
+// database and makes notes from one repo findable from another, which a
+// release should not start doing without being asked.
+type NativeConfig struct {
+	Enabled bool `toml:"enabled"`
+	// Roots are Claude config directories to index. Empty means the one this
+	// process runs under ($CLAUDE_CONFIG_DIR, else ~/.claude), so separate
+	// accounts on one machine do not see each other's notes.
+	Roots []string `toml:"roots"`
 }
 
 // StorageConfig controls the SQLite database location.
@@ -120,6 +144,7 @@ func Default() Config {
 			ContradictionThreshold:  1,
 			StaleRawDays:            14,
 		},
+		Retrieval: RetrievalConfig{Mode: "push"},
 	}
 }
 
@@ -147,6 +172,9 @@ func Load(path string) (Config, error) {
 	applyDefaults(&cfg)
 	cfg.Storage.Path = expandHome(cfg.Storage.Path)
 	cfg.Vault.Path = expandHome(cfg.Vault.Path)
+	for i, root := range cfg.Native.Roots {
+		cfg.Native.Roots[i] = expandHome(root)
+	}
 
 	if err := validate(cfg); err != nil {
 		return cfg, err
@@ -218,6 +246,9 @@ func write(path string, cfg Config) error {
 
 func applyDefaults(cfg *Config) {
 	d := Default()
+	if cfg.Retrieval.Mode == "" {
+		cfg.Retrieval.Mode = d.Retrieval.Mode
+	}
 	if cfg.Storage.Path == "" {
 		cfg.Storage.Path = d.Storage.Path
 	}

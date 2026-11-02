@@ -45,8 +45,10 @@ Returns `{results: [{id, title, type, tags, importance, score, snippet, created_
 
 `retrieval_mode` is `"hybrid"` when vector cosine was fused into the ranking via RRF, or `"fts"` when BM25/FTS5 alone decided it. It reports the actual per-call outcome, not the configured capability: a hybrid-capable store still returns `"fts"` when the embedder fails at query time or no matching observation carries a vector, so the signal never overstates what ran.
 
+With `[native_memory]` enabled, results also carry `native_memory`: up to five matching Claude Code auto memory notes from any repo, as `{id, project, name, description, type, modified_at, snippet, also_in}`, plus a `native_memory_note` saying they can be out of date. Notes ignore the `project` filter, since reaching other repos is why they are there. Searches narrowed by `type`, `tags` or `as_of` skip them. They sit in their own list because their scores are not comparable with saved memories.
+
 ### `mnemos_get`
-Fetch full observation by ID. Bumps access counter.
+Fetch a full memory. Accepts a full ID, the 8-character handle the memory index prints (case-insensitive, and an error if two memories share it), or a `native:` ID from `mnemos_search`. Bumps the access counter on saved memories. Native notes return `{id, source, project, path, name, description, type, modified_at, content}`, with any injected text flagged.
 
 ### `mnemos_delete`
 Hard-delete by ID. Use only for mistaken saves. For changed facts, use `mnemos_link` with `supersedes`.

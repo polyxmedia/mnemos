@@ -65,3 +65,37 @@ default_limit = -1
 		t.Log("note: negative default_limit is accepted (explicitly invalid)")
 	}
 }
+
+func TestRetrievalAndNativeDefaultsAreOff(t *testing.T) {
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Retrieval.Mode != "push" {
+		t.Errorf("mode = %q, want push", cfg.Retrieval.Mode)
+	}
+	if cfg.Native.Enabled {
+		t.Error("native memory index must be opt-in")
+	}
+}
+
+func TestLoadReadsRetrievalAndNativeSections(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	body := "[retrieval]\nmode = \"experiment\"\n[native_memory]\nenabled = true\nroots = [\"~/.claude-x\"]\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Retrieval.Mode != "experiment" || !cfg.Native.Enabled {
+		t.Errorf("sections not read: %+v %+v", cfg.Retrieval, cfg.Native)
+	}
+	if len(cfg.Native.Roots) != 1 || cfg.Native.Roots[0] != filepath.Join(home, ".claude-x") {
+		t.Errorf("root not expanded: %v", cfg.Native.Roots)
+	}
+}

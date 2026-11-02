@@ -31,10 +31,7 @@ func projectFromHook(in hookInput) string {
 			cwd = wd
 		}
 	}
-	if cwd == "" {
-		return ""
-	}
-	return filepath.Base(cwd)
+	return projectFromCWD(cwd)
 }
 
 // runHook is the parent dispatcher for harness-side hook subcommands. Each
@@ -120,7 +117,13 @@ func runHookUserPrompt(ctx context.Context, _ []string) error {
 	if sess != nil {
 		sessID, agentID = sess.ID, sess.AgentID
 	}
-	emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt, agentID, project, sessID)
+	// A session on the index arm pulls from the titles it was given at the
+	// start, so searching on its behalf here would blur the comparison. The
+	// capture directive stays on both arms: it writes memory, it does not
+	// surface any.
+	if sess == nil || sess.RetrievalArm != session.ArmIndex {
+		emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt, agentID, project, sessID)
+	}
 	emitCaptureDirective(os.Stdout, in.Prompt)
 	return nil
 }
@@ -629,14 +632,15 @@ const preToolMemoryMaxHits = 3
 // nothing.
 func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 	path := filePathFromToolInput(in.ToolInput)
-	if path == "" {
+	if path == "" || isAgentNoteFile(path) {
 		return
 	}
 	root := in.CWD
 	if root == "" {
 		root, _ = os.Getwd()
 	}
-	query := pathQueryTokens(path, root)
+	home, _ := os.UserHomeDir()
+	query := pathQueryTokens(path, repoRoot(root, home))
 	if query == "" {
 		return
 	}
@@ -713,6 +717,38 @@ func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 	_ = injection.NewLogger(injStore, nil).
 		Log(ctx, injection.ChannelPreTool, agentID, proj, sessID, refs)
 	_ = d.mem.RecordSurfaced(ctx, refIDs(refs))
+}
+
+// isAgentNoteFile reports whether path is one of the agent's own working
+// notes: Claude Code's auto memory under <config>/projects/<repo>/memory,
+// its plans directory, or a session scratchpad. Matching those paths against
+// code conventions finds nothing useful, and in the October 2026 audit about
+// a third of a sample of 30 pre-edit injections fired on them.
+func isAgentNoteFile(path string) bool {
+	segs := strings.FieldsFunc(filepath.ToSlash(path), func(r rune) bool { return r == '/' })
+	for i, seg := range segs {
+		switch {
+		case seg == "scratchpad" && hasClaudeTempDir(segs[:i]):
+			return true
+		case !strings.HasPrefix(seg, ".claude"):
+			continue
+		case i+1 < len(segs) && segs[i+1] == "plans":
+			return true
+		case i+3 < len(segs) && segs[i+1] == "projects" && segs[i+3] == "memory":
+			return true
+		}
+	}
+	return false
+}
+
+// hasClaudeTempDir matches the tmp/claude-<uid> directory sessions work in.
+func hasClaudeTempDir(segs []string) bool {
+	for i := 1; i < len(segs); i++ {
+		if segs[i-1] == "tmp" && strings.HasPrefix(segs[i], "claude-") {
+			return true
+		}
+	}
+	return false
 }
 
 // pathQueryTokens turns the file an edit is about to write into a search
