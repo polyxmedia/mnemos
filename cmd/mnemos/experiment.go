@@ -13,6 +13,7 @@ import (
 
 	"github.com/polyxmedia/mnemos/internal/experiment"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/session"
 )
 
 // runExperiment reports the randomised comparison between the push and index
@@ -131,6 +132,10 @@ func measureTranscript(path string, titles []string) (experiment.Metrics, error)
 func renderExperiment(w io.Writer, r experiment.Report, mode string, window time.Duration) {
 	fmt.Fprintf(w, "mnemos experiment: push vs index, last %s (retrieval mode: %s)\n\n", formatWindow(window), mode)
 	if r.Push.Assigned == 0 && r.Index.Assigned == 0 {
+		if mode == session.ModeExperiment {
+			fmt.Fprintln(w, "no conversations assigned in this window yet. New Claude Code conversations get an arm when they start.")
+			return
+		}
 		fmt.Fprintln(w, "no conversations assigned in this window. Turn it on in the config:")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "  [retrieval]")

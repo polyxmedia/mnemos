@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/polyxmedia/mnemos/internal/experiment"
 	"github.com/polyxmedia/mnemos/internal/memory"
@@ -351,6 +352,27 @@ func TestRunExperimentReadsTranscriptsByHostID(t *testing.T) {
 	})
 	if !strings.Contains(text, "Too early to read") || !strings.Contains(text, "at random") {
 		t.Errorf("text report: %s", text)
+	}
+}
+
+func TestRenderExperimentEmptyReportFitsTheMode(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string
+		not  string
+	}{
+		{session.ModeExperiment, "New Claude Code conversations get an arm", "Turn it on"},
+		{session.ModePush, "Turn it on in the config", "get an arm"},
+		{session.ModeIndex, "Turn it on in the config", "get an arm"},
+	}
+	for _, c := range cases {
+		t.Run(c.mode, func(t *testing.T) {
+			var buf bytes.Buffer
+			renderExperiment(&buf, experiment.Report{}, c.mode, time.Hour)
+			if !strings.Contains(buf.String(), c.want) || strings.Contains(buf.String(), c.not) {
+				t.Errorf("mode %s printed:\n%s", c.mode, buf.String())
+			}
+		})
 	}
 }
 
