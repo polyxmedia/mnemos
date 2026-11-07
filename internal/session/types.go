@@ -5,6 +5,7 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"time"
 )
@@ -50,6 +51,52 @@ type Session struct {
 	// Empty for sessions opened through mnemos_session_start or by a host
 	// that sends none.
 	HostSessionID string
+	// RetrievalArm is how this session receives memory. Empty means no
+	// assignment was made, which behaves as ArmPush.
+	RetrievalArm RetrievalArm
+}
+
+// RetrievalArm names how a session receives memory from the store.
+type RetrievalArm string
+
+const (
+	// ArmPush: the prompt hook searches on every prompt and injects hits.
+	ArmPush RetrievalArm = "push"
+	// ArmIndex: the session starts with a titles-only index and the agent
+	// opens what it wants. The prompt hook injects nothing.
+	ArmIndex RetrievalArm = "index"
+)
+
+// Retrieval modes accepted by the [retrieval] mode config setting.
+const (
+	ModePush       = "push"
+	ModeIndex      = "index"
+	ModeExperiment = "experiment"
+)
+
+// AssignArm picks the arm for a new session. In experiment mode the choice
+// is a hash of the host's conversation ID, so it is effectively random
+// across conversations and stable for one: resuming a conversation, or a
+// duplicate SessionStart install firing twice, cannot move it between arms.
+//
+// Experiment mode only assigns sessions with a host ID, because the report
+// reads outcomes from that conversation's transcript. Everything else, and
+// push mode, returns "" so the session stays out of the comparison.
+func AssignArm(mode, hostSessionID string) RetrievalArm {
+	switch mode {
+	case ModeIndex:
+		return ArmIndex
+	case ModeExperiment:
+		if hostSessionID == "" {
+			return ""
+		}
+		sum := sha256.Sum256([]byte(hostSessionID))
+		if sum[0]&1 == 1 {
+			return ArmIndex
+		}
+		return ArmPush
+	}
+	return ""
 }
 
 // OpenInput is the payload for mnemos_session_start.
@@ -58,6 +105,7 @@ type OpenInput struct {
 	Project       string
 	Goal          string
 	HostSessionID string
+	RetrievalArm  RetrievalArm
 }
 
 // CloseInput is the payload for mnemos_session_end. Reflection is the

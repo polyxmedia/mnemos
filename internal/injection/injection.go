@@ -56,6 +56,9 @@ const (
 	// ChannelPremortem: the mnemos_premortem tool — failure-relevant
 	// memory matched against a proposed plan before execution.
 	ChannelPremortem Channel = "premortem"
+	// ChannelCue: a memory fired by one of its cmd: or path: cues, before
+	// the command ran or the file was edited.
+	ChannelCue Channel = "cue"
 )
 
 // Valid reports whether c is a recognised channel. Same contract as
@@ -63,7 +66,7 @@ const (
 func (c Channel) Valid() bool {
 	switch c {
 	case ChannelPrewarm, ChannelRecovery, ChannelContext,
-		ChannelPromptHook, ChannelPreTool, ChannelPremortem:
+		ChannelPromptHook, ChannelPreTool, ChannelPremortem, ChannelCue:
 		return true
 	}
 	return false

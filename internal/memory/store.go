@@ -9,6 +9,9 @@ import (
 // ErrNotFound is returned when an observation lookup misses.
 var ErrNotFound = errors.New("observation not found")
 
+// ErrAmbiguousHandle is returned when an index handle matches several IDs.
+var ErrAmbiguousHandle = errors.New("handle matches more than one observation")
+
 // The store surface is segregated so consumers depend only on the subset
 // they actually use. The concrete SQLite implementation satisfies all
 // interfaces simultaneously; callers accept the narrowest one they need.
@@ -21,6 +24,10 @@ var ErrNotFound = errors.New("observation not found")
 // Reader is the read-only observation surface.
 type Reader interface {
 	Get(ctx context.Context, id string) (*Observation, error)
+	// GetByHandle returns the observation whose ID ends in handle, bumping
+	// its access count like Get. ErrNotFound on no match, ErrAmbiguousHandle
+	// when more than one ID ends that way.
+	GetByHandle(ctx context.Context, handle string) (*Observation, error)
 	// Export returns every observation (all tiers and validity states) in one
 	// drained query, without bumping access counts. The read side of the
 	// fidelity export/import round-trip.

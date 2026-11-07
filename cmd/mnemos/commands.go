@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/polyxmedia/mnemos/internal/config"
 	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/installer"
 	"github.com/polyxmedia/mnemos/internal/memory"
+	"github.com/polyxmedia/mnemos/internal/native"
 	"github.com/polyxmedia/mnemos/internal/rumination"
 	"github.com/polyxmedia/mnemos/internal/session"
 	"github.com/polyxmedia/mnemos/internal/skills"
@@ -28,6 +30,8 @@ type deps struct {
 	skl  *skills.Service
 	rum  *rumination.Service
 	cfg  config.Config
+	// native is nil unless [native_memory] is enabled.
+	native *native.Service
 }
 
 func (d *deps) close() { _ = d.db.Close() }
@@ -52,7 +56,22 @@ func loadDeps(ctx context.Context) (*deps, error) {
 		skl:  skl,
 		rum:  newRumination(cfg, db, skl),
 		cfg:  cfg,
+
+		native: newNativeService(cfg, db),
 	}, nil
+}
+
+// newNativeService builds the native-note index when the config enables it,
+// else returns nil. No I/O happens until the first sync or search.
+func newNativeService(cfg config.Config, db *storage.DB) *native.Service {
+	if !cfg.Native.Enabled {
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	return native.NewService(native.Config{
+		Store: db.Native(),
+		Roots: native.DefaultRoots(cfg.Native.Roots, os.Getenv("CLAUDE_CONFIG_DIR"), home),
+	})
 }
 
 // newRumination composes the rumination service with whatever monitors
@@ -110,7 +129,8 @@ func runSearch(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("search: %w", err)
 	}
-	if len(results) == 0 {
+	notes := searchNotes(ctx, d, args[0])
+	if len(results) == 0 && len(notes) == 0 {
 		fmt.Println("no matches")
 		return nil
 	}
@@ -118,6 +138,7 @@ func runSearch(ctx context.Context, args []string) error {
 		fmt.Printf("  %s  %-8s  %s\n", r.Observation.ID, r.Observation.Type, r.Observation.Title)
 		fmt.Printf("    %s\n\n", r.Snippet)
 	}
+	printNoteHits(notes)
 	fmt.Printf("%d result(s) · retrieval: %s\n", len(results), mode)
 	return nil
 }
@@ -409,10 +430,12 @@ func claudeHooks(selfPath string) []labeledHook {
 			},
 		},
 		{
+			// Bash is here for cmd: cues, which fire a saved rule right
+			// before the command it is about.
 			label: "Claude Code PreToolUse just-in-time memory",
 			entry: installer.HookEntry{
 				Event:   "PreToolUse",
-				Matcher: "Edit|Write|MultiEdit|NotebookEdit",
+				Matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash",
 				Command: fmt.Sprintf("%s hook pre-tool", selfPath),
 				Timeout: 5,
 			},
@@ -425,7 +448,8 @@ func claudeHooks(selfPath string) []labeledHook {
 // to stderr, which never appeared in a single transcript, while every run
 // logged its memories as surfaced. The startup-only SessionStart entry is
 // superseded by the startup|resume|clear one; leaving both would fire
-// prewarm twice on every launch.
+// prewarm twice on every launch. The edit-only just-in-time entry is
+// superseded by the one that also matches Bash, for cmd: cues.
 func obsoleteClaudeHooks(selfPath string) []labeledHook {
 	return []labeledHook{
 		{
@@ -445,6 +469,13 @@ func obsoleteClaudeHooks(selfPath string) []labeledHook {
 			label: "PostCompact hook",
 			entry: installer.HookEntry{
 				Event: "PostCompact", Command: fmt.Sprintf("%s hook post-compact", selfPath),
+			},
+		},
+		{
+			label: "edit-only PreToolUse just-in-time memory hook",
+			entry: installer.HookEntry{
+				Event: "PreToolUse", Matcher: "Edit|Write|MultiEdit|NotebookEdit",
+				Command: fmt.Sprintf("%s hook pre-tool", selfPath),
 			},
 		},
 	}
@@ -552,6 +583,17 @@ func runDoctor(ctx context.Context, _ []string) error {
 		if t.Name == "Claude Code (user)" {
 			hasClaudeCode = true
 		}
+	}
+
+	switch cfg.Retrieval.Mode {
+	case session.ModePush, session.ModeIndex, session.ModeExperiment:
+		check(true, "retrieval mode: %s", cfg.Retrieval.Mode)
+	default:
+		check(false, "retrieval mode %q is not push, index or experiment, so sessions use push", cfg.Retrieval.Mode)
+	}
+	if notes := newNativeService(cfg, db); notes != nil {
+		count, repos, err := notes.Counts(ctx)
+		check(err == nil, "native memory index: %d notes across %d repos in %s", count, repos, strings.Join(notes.Roots(), ", "))
 	}
 
 	if hasClaudeCode {

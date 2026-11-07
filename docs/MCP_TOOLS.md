@@ -23,11 +23,12 @@ Store an agent-curated observation.
 | `trust_tier` |   | `raw`, `curated`, `skill`; defaults to `curated` |
 | `derived_from` |   | parent observation IDs |
 | `rationale` |   | why this memory matters |
+| `cues` |   | actions that fire the memory right before them: `cmd:<words>` for a shell command (`cmd:git commit`), `path:<glob>` for a file edit (`path:**/migrations/*.sql`). An invalid cue fails the whole call |
 
-Returns `{id, title, type, source_kind, trust_tier, derived_from, created_at, deduped}`. `deduped: true` means an identical live observation already existed; its access counter was bumped instead.
+Returns `{id, title, type, source_kind, trust_tier, derived_from, created_at, deduped, cues}`. `deduped: true` means an identical live observation already existed; its access counter was bumped instead.
 
 ### `mnemos_search`
-BM25 + importance + recency + access-frequency ranked search.
+BM25 + importance + recency + access-frequency ranked search. This tool and `mnemos_get` carry `_meta["anthropic/alwaysLoad"]`, so Claude Code loads them with the session instead of deferring them behind tool search.
 
 | Param | Required | Notes |
 |---|---|---|
@@ -45,8 +46,10 @@ Returns `{results: [{id, title, type, tags, importance, score, snippet, created_
 
 `retrieval_mode` is `"hybrid"` when vector cosine was fused into the ranking via RRF, or `"fts"` when BM25/FTS5 alone decided it. It reports the actual per-call outcome, not the configured capability: a hybrid-capable store still returns `"fts"` when the embedder fails at query time or no matching observation carries a vector, so the signal never overstates what ran.
 
+With `[native_memory]` enabled, results also carry `native_memory`: up to five matching Claude Code auto memory notes from any repo, as `{id, project, name, description, type, modified_at, snippet, also_in}`, plus a `native_memory_note` saying they can be out of date. Notes ignore the `project` filter, since reaching other repos is why they are there. Searches narrowed by `type`, `tags` or `as_of` skip them. They sit in their own list because their scores are not comparable with saved memories.
+
 ### `mnemos_get`
-Fetch full observation by ID. Bumps access counter.
+Fetch a full memory. Accepts a full ID, the 8-character handle the memory index prints (case-insensitive, and an error if two memories share it), or a `native:` ID from `mnemos_search`. Bumps the access counter on saved memories. Native notes return `{id, source, project, path, name, description, type, modified_at, content}`, with any injected text flagged.
 
 ### `mnemos_delete`
 Hard-delete by ID. Use only for mistaken saves. For changed facts, use `mnemos_link` with `supersedes`.
@@ -123,7 +126,7 @@ Typical path: `raw` to `curated` after tool-output content is verified, or `cura
 Record a mistake and its fix. Higher retrieval weight than regular observations.
 
 | `title`, `tried`, `wrong_because`, `fix` | all required |
-| `trigger_context`, `tags`, `agent_id`, `project`, `session_id`, `importance` | optional |
+| `trigger_context`, `tags`, `agent_id`, `project`, `session_id`, `importance`, `cues` | optional; `cues` as in `mnemos_save` |
 
 Surfaced automatically in pre-warm when the session goal matches.
 
@@ -131,7 +134,7 @@ Surfaced automatically in pre-warm when the session goal matches.
 Declare a project convention. Auto-injected at every `mnemos_session_start` for the matching project.
 
 | `title`, `rule` | required |
-| `project`, `rationale`, `example`, `tags`, `agent_id` | optional; `project` defaults to the server's project |
+| `project`, `rationale`, `example`, `tags`, `agent_id`, `cues` | optional; `project` defaults to the server's project, `cues` as in `mnemos_save` |
 
 Rationale is surfaced in pre-warm — WHY matters more than what.
 

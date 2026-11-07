@@ -131,6 +131,12 @@ BM25 plus cosine similarity via Reciprocal Rank Fusion. Auto enables when Ollama
 
 When Claude Code compacts mid-session you lose your in-session state. `mnemos_context` in `recovery` mode reconstructs goal, decisions, and in-session observations so the agent can keep going.
 
+### Cues
+
+Most rules belong to an action. Attach `cmd:git commit` or `path:**/migrations/*.sql` to a memory and it fires right before the matching command or file edit, as context on that tool call, at most once per half hour. It needs no score or floor, and it still fires after a compaction has dropped everything the session was told at the start.
+
+In a `cmd:` cue the first word is the program and each later plain word is the next positional argument, so `cmd:git commit` fires on `git -C repo commit -m x` and stays quiet on `git log --grep commit`. A word starting with `-` is a flag and may appear anywhere. In a `path:` cue `**` spans directories, and a glob with no slash matches the file name. `mnemos_save`, `mnemos_correct` and `mnemos_convention` take a `cues` list, and `mnemos cue test --cmd "..."` shows what would fire before you rely on it.
+
 ### Skill packs and Obsidian export
 
 Export a skill as a JSON pack, share by file or URL, install with `mnemos skill import <file-or-url>`. Or run `mnemos vault export|watch` to write the whole store as a markdown graph with wikilinks, in case you want to read it in Obsidian.
@@ -213,9 +219,13 @@ Use `pkg/client` from Go or call `POST /v1/observations` directly. Reference: [d
 | `mnemos init` | Wire agent clients |
 | `mnemos doctor` | Verify install |
 | `mnemos prewarm` | Print session-start prewarm block |
-| `mnemos search <query>` | Search store |
+| `mnemos search <query>` | Search store, plus auto memory notes when the native index is on |
 | `mnemos stats` | Counts and tags |
 | `mnemos sessions` | Recent sessions |
+| `mnemos experiment [--format json]` | Compare the push and index arms under the rule in [docs/experiment.md](docs/experiment.md) |
+| `mnemos experiment sample\|score` | Export logged prompts and memories to label blind, then score the labels |
+| `mnemos cue list\|add\|rm\|import\|test` | Triggers that show a memory before a matching command or edit |
+| `mnemos native status\|sync` | Read-only index of Claude Code auto memory notes |
 | `mnemos replay <session_id>` | Markdown recap of a past session |
 | `mnemos export [file]` | JSON dump |
 | `mnemos import <file>` | Restore from JSON |
@@ -274,6 +284,14 @@ stale_skill_floor         = 0.5
 correction_repeat_n       = 3
 contradiction_threshold   = 1
 
+[retrieval]
+mode = "push"               # push | index | experiment
+experiment_start = ""       # e.g. "2026-11-07": `mnemos experiment` counts from here
+
+[native_memory]
+enabled = false             # read-only index of Claude Code auto memory
+roots   = []                # default: CLAUDE_CONFIG_DIR, else ~/.claude
+
 [server]
 transport = "stdio"
 http_addr = ":8080"
@@ -289,7 +307,10 @@ internal/storage      SQLite + FTS5 (modernc.org/sqlite), bi-temporal schema
 internal/memory       observations, hybrid ranker (BM25 + cosine via RRF)
 internal/session      session service
 internal/skills       procedural memory service
-internal/prewarm      session_start and compaction-recovery composers
+internal/prewarm      session_start and compaction-recovery composers, titles index
+internal/native       read-only index of Claude Code auto memory notes
+internal/experiment   push vs index comparison, blind-label sampling and scoring
+internal/cue          cmd: and path: triggers matched against tool calls
 internal/safety       prompt-injection scanner
 internal/dream        consolidation daemon
 internal/rumination   threshold monitors, hostile-review packaging

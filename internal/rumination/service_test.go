@@ -52,6 +52,10 @@ func (f *fakeMemoryReader) Get(ctx context.Context, id string) (*memory.Observat
 	return o, nil
 }
 
+func (f *fakeMemoryReader) GetByHandle(ctx context.Context, handle string) (*memory.Observation, error) {
+	return f.Get(ctx, handle)
+}
+
 func (f *fakeMemoryReader) Export(ctx context.Context) ([]memory.Observation, error) {
 	out := make([]memory.Observation, 0, len(f.items))
 	for _, o := range f.items {
