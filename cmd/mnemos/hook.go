@@ -126,7 +126,7 @@ func runHookUserPrompt(ctx context.Context, _ []string) error {
 	// have shown on both arms. The capture directive stays on both arms: it
 	// writes memory, it does not surface any.
 	show := arm != session.ArmIndex
-	var out io.Writer = io.Discard
+	out := io.Discard
 	if show {
 		out = os.Stdout
 	}
