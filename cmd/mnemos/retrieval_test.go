@@ -368,7 +368,7 @@ func TestRenderExperimentEmptyReportFitsTheMode(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.mode, func(t *testing.T) {
 			var buf bytes.Buffer
-			renderExperiment(&buf, experiment.Report{}, c.mode, time.Hour)
+			renderExperiment(&buf, experiment.Report{}, c.mode, time.Time{})
 			if !strings.Contains(buf.String(), c.want) || strings.Contains(buf.String(), c.not) {
 				t.Errorf("mode %s printed:\n%s", c.mode, buf.String())
 			}

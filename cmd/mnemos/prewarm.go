@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
 	"github.com/polyxmedia/mnemos/internal/session"
+	"github.com/polyxmedia/mnemos/internal/storage"
 )
 
 // hookInput mirrors the JSON payload Claude Code writes to hook stdin.
@@ -98,7 +101,7 @@ func runPrewarm(ctx context.Context, args []string) error {
 			sessID, arm = sess.ID, sess.RetrievalArm
 		} else if sess, err := d.sess.Open(ctx, session.OpenInput{
 			Project: proj, Goal: *goal, HostSessionID: in.SessionID,
-			RetrievalArm: session.AssignArm(d.cfg.Retrieval.Mode, in.SessionID),
+			RetrievalArm: assignArm(d.cfg.Retrieval.Mode, in.SessionID, cwd),
 		}); err == nil {
 			sessID, arm = sess.ID, sess.RetrievalArm
 		}
@@ -129,6 +132,16 @@ func runPrewarm(ctx context.Context, args []string) error {
 		}
 	}
 
+	channel := storage.EventPrewarm
+	if pwMode == prewarm.ModeCompactionRecovery {
+		channel = storage.EventRecovery
+	}
+	chars := len(block.Text) + len(memoryIndex)
+	recordRetrievalEvent(ctx, d, cwd, storage.RetrievalEvent{
+		Channel: channel, HostSessionID: in.SessionID, SessionID: sessID, Project: proj,
+		Arm: string(arm), Fired: chars > 0, Chars: chars,
+	})
+
 	switch *format {
 	case "json":
 		out := map[string]any{
@@ -156,6 +169,28 @@ func runPrewarm(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+// assignArm picks a session's retrieval arm, keeping conversations that run
+// inside Claude Code's own temp area (tmp/claude-<uid>/...) out of the
+// experiment. Those are scripted runs, such as one session's end-to-end
+// tests driving the claude CLI from its scratchpad: in the first week of
+// the experiment they were 10 of its 51 conversations, each a one-line
+// prompt with nothing to remember. Every one of them ran there.
+func assignArm(mode, hostSessionID, cwd string) session.RetrievalArm {
+	if isClaudeTempWorkDir(cwd) {
+		return ""
+	}
+	return session.AssignArm(mode, hostSessionID)
+}
+
+// isClaudeTempWorkDir reports whether dir lies under tmp/claude-<uid>.
+func isClaudeTempWorkDir(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	segs := strings.FieldsFunc(filepath.ToSlash(dir), func(r rune) bool { return r == '/' })
+	return hasClaudeTempDir(segs)
 }
 
 // sessionAdoptWindow bounds how recently an open session must have started

@@ -119,6 +119,7 @@ func runServe(ctx context.Context, args []string) error {
 			return fi.Size(), nil
 		},
 		DefaultProject: serverProject(),
+		Cues:           db.Cues(),
 	}
 	// Assigned only when enabled: a nil *native.Service in the interface
 	// would read as present.

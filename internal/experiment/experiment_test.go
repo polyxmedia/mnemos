@@ -164,119 +164,143 @@ func TestPushbackDetector(t *testing.T) {
 	}
 }
 
+// conversations builds n measured conversations on arm with a prompt hook
+// event per prompt, varied a little so intervals have a width.
 func conversations(arm string, n int, m experiment.Metrics) []experiment.Conversation {
 	out := make([]experiment.Conversation, n)
 	for i := range out {
 		out[i] = experiment.Conversation{Arm: arm, Found: true, Metrics: m}
-		// A little variation so intervals have a width.
 		out[i].Metrics.Mentioned += i % 2
 		out[i].Metrics.Pushback += i % 2
+		out[i].Delivery = experiment.Delivery{PromptEvents: m.Prompts, Chars: 100 * m.Prompts}
 	}
 	return out
 }
 
-func TestBuildVerdict(t *testing.T) {
-	base := experiment.Metrics{Prompts: 10}
-	withMentions := func(n int) experiment.Metrics {
+func build(push, index []experiment.Conversation) experiment.Report {
+	return experiment.Build(append(append([]experiment.Conversation{}, push...), index...))
+}
+
+func TestBuildDecision(t *testing.T) {
+	base := experiment.Metrics{Prompts: 12}
+	with := func(mentioned, pushback int) experiment.Metrics {
 		m := base
-		m.Mentioned = n
+		m.Mentioned, m.Pushback = mentioned, pushback
 		return m
 	}
-	withPushback := func(n int) experiment.Metrics {
-		m := base
-		m.Pushback = n
-		return m
+	cheaper := func(cs []experiment.Conversation) []experiment.Conversation {
+		for i := range cs {
+			cs[i].Delivery.Chars /= 4
+		}
+		return cs
 	}
 	cases := []struct {
-		name string
-		push []experiment.Conversation
-		idx  []experiment.Conversation
-		want string
+		name         string
+		push, index  []experiment.Conversation
+		verdict, act string
 	}{
-		{
-			"too few conversations",
-			conversations(experiment.ArmPush, 5, base),
-			conversations(experiment.ArmIndex, 40, base),
-			"Too early",
-		},
-		{
-			"index clearly higher",
-			conversations(experiment.ArmPush, 30, withMentions(1)),
-			conversations(experiment.ArmIndex, 30, withMentions(5)),
-			"Index sessions used more memory",
-		},
-		{
-			"push clearly higher",
-			conversations(experiment.ArmPush, 30, withMentions(5)),
-			conversations(experiment.ArmIndex, 30, withMentions(1)),
-			"Push sessions used more memory",
-		},
-		{
-			"no difference",
-			conversations(experiment.ArmPush, 30, base),
-			conversations(experiment.ArmIndex, 30, base),
-			"No measurable difference",
-		},
-		{
-			"guardrail warns against index",
-			conversations(experiment.ArmPush, 30, base),
-			conversations(experiment.ArmIndex, 30, withPushback(5)),
-			"Warning: index sessions drew more pushback",
-		},
-		{
-			"guardrail warns against push",
-			conversations(experiment.ArmPush, 30, withPushback(5)),
-			conversations(experiment.ArmIndex, 30, base),
-			"Warning: push sessions drew more pushback",
-		},
+		{"too few conversations", conversations(experiment.ArmPush, 5, base), conversations(experiment.ArmIndex, 50, base), "Too early", "Keep the experiment running"},
+		{"too few prompts", conversations(experiment.ArmPush, 45, experiment.Metrics{Prompts: 2}), conversations(experiment.ArmIndex, 45, experiment.Metrics{Prompts: 2}), "Too early", "Keep the experiment running"},
+		{"index clearly higher", conversations(experiment.ArmPush, 45, with(1, 0)), conversations(experiment.ArmIndex, 45, with(5, 0)), "Index replies used more memory", "Switch to index"},
+		{"push clearly higher", conversations(experiment.ArmPush, 45, with(5, 0)), conversations(experiment.ArmIndex, 45, with(1, 0)), "Push replies used more memory", "Keep push"},
+		{"guardrail blocks index", conversations(experiment.ArmPush, 45, with(1, 0)), conversations(experiment.ArmIndex, 45, with(5, 5)), "drew more pushback", "guardrail blocks"},
+		{"no difference, index cheaper", conversations(experiment.ArmPush, 45, base), cheaper(conversations(experiment.ArmIndex, 45, base)), "Index injects", "Switch to index"},
+		{"no difference, same cost", conversations(experiment.ArmPush, 45, base), conversations(experiment.ArmIndex, 45, base), "Neither is clearly cheaper", "fewest moving parts"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := experiment.Build(append(append([]experiment.Conversation{}, c.push...), c.idx...))
-			if !strings.Contains(r.Verdict, c.want) {
-				t.Errorf("verdict %q does not contain %q", r.Verdict, c.want)
+			r := build(c.push, c.index)
+			if !strings.Contains(r.Verdict, c.verdict) || !strings.Contains(r.Decision, c.act) {
+				t.Errorf("verdict %q / decision %q, want %q / %q", r.Verdict, r.Decision, c.verdict, c.act)
 			}
 		})
 	}
 }
 
-func TestBuildExcludesWhatItCannotMeasure(t *testing.T) {
+func TestBuildCountsWhatItCannotMeasure(t *testing.T) {
 	r := experiment.Build([]experiment.Conversation{
-		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 4, Mentioned: 2}},
+		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 4, Mentioned: 2}, Delivery: experiment.Delivery{PromptEvents: 4}},
 		{Arm: experiment.ArmPush, Found: false},
 		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 0}},
+		{Arm: experiment.ArmPush, Found: true, Excluded: "scripted", Metrics: experiment.Metrics{Prompts: 9}},
 		{Arm: experiment.ArmIndex, Found: true, Metrics: experiment.Metrics{Prompts: 2, Mentioned: 1, Pushback: 1}},
 		{Arm: "something-else", Found: true, Metrics: experiment.Metrics{Prompts: 9}},
 	})
-	if r.Push.Assigned != 3 || r.Push.Measured != 1 || r.Push.Totals.Prompts != 4 {
+	if r.Push.Assigned != 4 || r.Push.Excluded != 1 || r.Push.Missing != 1 || r.Push.Measured != 1 || r.Push.Totals.Prompts != 4 {
 		t.Errorf("push summary: %+v", r.Push)
 	}
 	if r.Index.Assigned != 1 || r.Index.Measured != 1 {
 		t.Errorf("index summary: %+v", r.Index)
 	}
-	pushback := r.Comparisons[1]
-	if pushback.PushN != 1 || pushback.IndexN != 0 {
-		t.Errorf("conversations under three prompts must stay out of the rate: %+v", pushback)
+	if r.Push.HookCoverage != 1 || r.Index.HookCoverage != 0 {
+		t.Errorf("hook coverage: push %v index %v", r.Push.HookCoverage, r.Index.HookCoverage)
 	}
 }
 
-func TestBuildIntervalMatchesWelchByHand(t *testing.T) {
-	// Push mentions are 0 and 2, index mentions are 4 and 6. Each has mean
-	// (1, 5) and sample variance 2, so the margin is 1.96 * sqrt(2/2 + 2/2).
+func TestRatesPoolPromptsAcrossConversations(t *testing.T) {
+	// One long conversation with no mentions and one short one with two:
+	// pooled, that is 2 mentions in 20 prompts, 10 per 100. A mean of
+	// per-conversation rates would say 50 and let the short one dominate.
 	r := experiment.Build([]experiment.Conversation{
-		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 1, Mentioned: 0}},
-		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 1, Mentioned: 2}},
-		{Arm: experiment.ArmIndex, Found: true, Metrics: experiment.Metrics{Prompts: 1, Mentioned: 4}},
-		{Arm: experiment.ArmIndex, Found: true, Metrics: experiment.Metrics{Prompts: 1, Mentioned: 6}},
+		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 18}},
+		{Arm: experiment.ArmPush, Found: true, Metrics: experiment.Metrics{Prompts: 2, Mentioned: 2}},
 	})
-	c := r.Comparisons[0]
-	if c.Diff != 4 {
-		t.Errorf("diff = %v", c.Diff)
+	if got := r.Comparisons[0].Push; abs(got-10) > 1e-9 {
+		t.Errorf("pooled rate = %v, want 10", got)
 	}
-	const margin = 2.771859
-	if abs(c.Low-(4-margin)) > 1e-4 || abs(c.High-(4+margin)) > 1e-4 {
-		t.Errorf("interval %v..%v", c.Low, c.High)
+}
+
+func TestIntervalIsRepeatableAndCoversTheDifference(t *testing.T) {
+	push := conversations(experiment.ArmPush, 45, experiment.Metrics{Prompts: 12, Mentioned: 1})
+	index := conversations(experiment.ArmIndex, 45, experiment.Metrics{Prompts: 12, Mentioned: 3})
+	a, b := build(push, index).Comparisons[0], build(push, index).Comparisons[0]
+	if !a.HasInterval || a.Low != b.Low || a.High != b.High {
+		t.Fatalf("the same data must give the same interval: %+v vs %+v", a, b)
 	}
+	if a.Low > a.Diff || a.High < a.Diff || a.Low <= 0 {
+		t.Errorf("interval %v..%v should hold the difference %v and clear zero", a.Low, a.High, a.Diff)
+	}
+}
+
+func TestDataProblemsBlockTheReading(t *testing.T) {
+	ok := func() ([]experiment.Conversation, []experiment.Conversation) {
+		return conversations(experiment.ArmPush, 45, experiment.Metrics{Prompts: 12, Mentioned: 1}),
+			conversations(experiment.ArmIndex, 45, experiment.Metrics{Prompts: 12, Mentioned: 5})
+	}
+
+	push, index := ok()
+	if r := build(push, index); !r.Ready || len(r.Problems) != 0 {
+		t.Fatalf("clean data should be readable: %+v", r.Problems)
+	}
+
+	push, index = ok()
+	index[0].Metrics.Prompts, index[1].Metrics.Prompts = 400, 400
+	if r := build(push, index); r.Ready || !hasProblem(r, "two longest conversations") {
+		t.Errorf("two dominant conversations must block the reading: %v", r.Problems)
+	}
+
+	push, index = ok()
+	for i := range push {
+		push[i].Delivery.PromptEvents = 0
+	}
+	if r := build(push, index); r.Ready || !hasProblem(r, "prompt hook event") {
+		t.Errorf("missing hook events must block the reading: %v", r.Problems)
+	}
+
+	push, index = ok()
+	push = append(push, conversations(experiment.ArmPush, 60, experiment.Metrics{Prompts: 12})...)
+	if r := build(push, index); r.Ready || !hasProblem(r, "lopsided") {
+		t.Errorf("a broken split must block the reading: %v", r.Problems)
+	}
+}
+
+func hasProblem(r experiment.Report, s string) bool {
+	for _, p := range r.Problems {
+		if strings.Contains(p, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func abs(v float64) float64 {

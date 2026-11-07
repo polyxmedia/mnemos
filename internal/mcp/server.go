@@ -9,6 +9,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/polyxmedia/mnemos/internal/memory"
@@ -50,6 +51,14 @@ type Config struct {
 	// Native is optional; when set, mnemos_search also returns matching auto
 	// memory notes from other repos and mnemos_get opens them.
 	Native NativeNotes
+	// Cues is optional; when set, save, correct and convention accept cues
+	// that fire the memory before a matching command or file edit.
+	Cues CueStore
+}
+
+// CueStore attaches action triggers to memories.
+type CueStore interface {
+	Add(ctx context.Context, observationID string, cues []string, now time.Time) error
 }
 
 // NativeNotes is the read-only surface over Claude Code's auto memory notes.

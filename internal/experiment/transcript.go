@@ -31,8 +31,12 @@ type Metrics struct {
 	// Mentioned counts distinct saved memories whose title words appear
 	// together in one assistant message.
 	Mentioned int
-	// InjectedChars totals what mnemos hooks added to the context.
+	// InjectedChars totals what mnemos hooks added to the context, as far
+	// as the transcript shows it. The event log is the better source.
 	InjectedChars int
+	// CWD is the working directory the conversation ran in, from its first
+	// line that records one.
+	CWD string `json:",omitempty"`
 }
 
 // Options configures transcript reading.
@@ -54,6 +58,7 @@ type transcriptLine struct {
 	IsSidechain      bool            `json:"isSidechain"`
 	IsMeta           bool            `json:"isMeta"`
 	IsCompactSummary bool            `json:"isCompactSummary"`
+	CWD              string          `json:"cwd"`
 	Message          *messageBody    `json:"message"`
 	Attachment       json.RawMessage `json:"attachment"`
 }
@@ -126,6 +131,9 @@ func readLine(r *bufio.Reader) ([]byte, error) {
 }
 
 func (m *Metrics) apply(line transcriptLine, opts Options, pushback *PushbackDetector, signatures []titleSignature, mentioned map[int]bool) {
+	if m.CWD == "" {
+		m.CWD = line.CWD
+	}
 	switch line.Type {
 	case "user":
 		m.applyUser(line, opts, pushback)

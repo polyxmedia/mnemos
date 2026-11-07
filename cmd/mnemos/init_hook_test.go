@@ -196,13 +196,13 @@ func TestRunInitWiresPreToolGuardrailForClaudeCode(t *testing.T) {
 	hooks := cfg["hooks"].(map[string]any)
 	groups, ok := hooks["PreToolUse"].([]any)
 	// Two PreToolUse surfaces share the subcommand: the write-tool
-	// guardrail and just-in-time memory injection on file edits.
+	// guardrail and just-in-time memory on file edits and Bash commands.
 	if !ok || len(groups) != 2 {
 		t.Fatalf("expected two PreToolUse groups, got %v", groups)
 	}
 	wantMatchers := map[string]bool{
 		"mcp__mnemos__mnemos_save|mcp__mnemos__mnemos_correct|mcp__mnemos__mnemos_convention": false,
-		"Edit|Write|MultiEdit|NotebookEdit":                                                   false,
+		"Edit|Write|MultiEdit|NotebookEdit|Bash":                                              false,
 	}
 	for _, g := range groups {
 		group := g.(map[string]any)

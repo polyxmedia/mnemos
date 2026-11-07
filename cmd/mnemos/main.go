@@ -47,6 +47,7 @@ var commands = map[string]handler{
 	"efficacy":   runEfficacy,
 	"experiment": runExperiment,
 	"native":     runNative,
+	"cue":        runCue,
 	"sessions":   runSessions,
 	"export":     runExport,
 	"import":     runImport,
@@ -93,8 +94,9 @@ Commands:
   stats                  Show memory statistics
   digest [--since 24h]   Activity summary: saves, surfacing, sessions, dreams
   efficacy [--since]     Surfaced-vs-outcome: does surfacing memory go with sessions that end ok
-  experiment [--since]   Compare the randomly assigned push and index arms
+  experiment [sample|score]  Compare the push and index arms; label logged prompts blind
   native [status|sync]   Read-only index of Claude Code auto memory notes
+  cue [list|add|rm|import|test]  Triggers that show a memory before a matching command or edit
   sessions               List recent sessions
   export [file]          Export all data as JSON
   import <file>          Import data from JSON

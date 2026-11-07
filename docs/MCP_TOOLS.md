@@ -23,11 +23,12 @@ Store an agent-curated observation.
 | `trust_tier` |   | `raw`, `curated`, `skill`; defaults to `curated` |
 | `derived_from` |   | parent observation IDs |
 | `rationale` |   | why this memory matters |
+| `cues` |   | actions that fire the memory right before them: `cmd:<words>` for a shell command (`cmd:git commit`), `path:<glob>` for a file edit (`path:**/migrations/*.sql`). An invalid cue fails the whole call |
 
-Returns `{id, title, type, source_kind, trust_tier, derived_from, created_at, deduped}`. `deduped: true` means an identical live observation already existed; its access counter was bumped instead.
+Returns `{id, title, type, source_kind, trust_tier, derived_from, created_at, deduped, cues}`. `deduped: true` means an identical live observation already existed; its access counter was bumped instead.
 
 ### `mnemos_search`
-BM25 + importance + recency + access-frequency ranked search.
+BM25 + importance + recency + access-frequency ranked search. This tool and `mnemos_get` carry `_meta["anthropic/alwaysLoad"]`, so Claude Code loads them with the session instead of deferring them behind tool search.
 
 | Param | Required | Notes |
 |---|---|---|
@@ -125,7 +126,7 @@ Typical path: `raw` to `curated` after tool-output content is verified, or `cura
 Record a mistake and its fix. Higher retrieval weight than regular observations.
 
 | `title`, `tried`, `wrong_because`, `fix` | all required |
-| `trigger_context`, `tags`, `agent_id`, `project`, `session_id`, `importance` | optional |
+| `trigger_context`, `tags`, `agent_id`, `project`, `session_id`, `importance`, `cues` | optional; `cues` as in `mnemos_save` |
 
 Surfaced automatically in pre-warm when the session goal matches.
 
@@ -133,7 +134,7 @@ Surfaced automatically in pre-warm when the session goal matches.
 Declare a project convention. Auto-injected at every `mnemos_session_start` for the matching project.
 
 | `title`, `rule` | required |
-| `project`, `rationale`, `example`, `tags`, `agent_id` | optional; `project` defaults to the server's project |
+| `project`, `rationale`, `example`, `tags`, `agent_id`, `cues` | optional; `project` defaults to the server's project, `cues` as in `mnemos_save` |
 
 Rationale is surfaced in pre-warm — WHY matters more than what.
 

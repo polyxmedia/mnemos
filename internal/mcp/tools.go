@@ -9,6 +9,7 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/polyxmedia/mnemos/internal/cue"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/native"
 	"github.com/polyxmedia/mnemos/internal/prewarm"
@@ -36,6 +37,7 @@ func (s *Server) registerTools() {
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_search",
+		Meta: alwaysLoad(),
 		Description: "Call BEFORE any non-trivial code change, design decision, or refactor in this " +
 			"project to surface prior decisions, conventions, and corrections. Skipping risks repeating " +
 			"known mistakes already recorded. Hybrid BM25 + vector ranked search with recency/importance/" +
@@ -45,6 +47,7 @@ func (s *Server) registerTools() {
 
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
 		Name: "mnemos_get",
+		Meta: alwaysLoad(),
 		Description: "Fetch a full memory by ID, by the 8-character handle shown in the memory index, " +
 			"or by a native: ID from mnemos_search. Bumps the access counter on saved memories.",
 	}, s.handleGet)
@@ -235,9 +238,14 @@ type saveArgs struct {
 	SourceKind  string   `json:"source_kind,omitempty" jsonschema:"user|tool|agent_inference|dream|import — defaults to user"`
 	TrustTier   string   `json:"trust_tier,omitempty" jsonschema:"raw|curated|skill — only user-sourced saves keep this; any non-user source_kind is quarantined to raw automatically regardless of this value"`
 	DerivedFrom []string `json:"derived_from,omitempty" jsonschema:"parent observation IDs this memory was derived from"`
+	Cues        []string `json:"cues,omitempty" jsonschema:"actions that make this memory apply, so it is shown right before them: cmd:<words> for a shell command (its words in order, the first being the program, e.g. cmd:git commit) or path:<glob> for a file about to be edited (e.g. path:**/migrations/*.sql). Add one whenever the rule is about a specific command or kind of file"`
 }
 
 func (s *Server) handleSave(ctx context.Context, _ *mcpsdk.CallToolRequest, a saveArgs) (*mcpsdk.CallToolResult, any, error) {
+	cues, err := parseCues(a.Cues)
+	if err != nil {
+		return nil, nil, err
+	}
 	in := memory.SaveInput{
 		Title: a.Title, Content: a.Content, Type: memory.ObsType(a.Type),
 		Tags: a.Tags, Importance: a.Importance, TTLDays: a.TTLDays,
@@ -261,6 +269,10 @@ func (s *Server) handleSave(ctx context.Context, _ *mcpsdk.CallToolRequest, a sa
 	if err != nil {
 		return nil, nil, err
 	}
+	attached, err := s.attachCues(ctx, res.Observation.ID, cues)
+	if err != nil {
+		return nil, nil, err
+	}
 	return jsonResult(map[string]any{
 		"id":           res.Observation.ID,
 		"title":        res.Observation.Title,
@@ -270,7 +282,43 @@ func (s *Server) handleSave(ctx context.Context, _ *mcpsdk.CallToolRequest, a sa
 		"derived_from": res.Observation.DerivedFrom,
 		"created_at":   res.Observation.CreatedAt,
 		"deduped":      res.Deduped,
+		"cues":         attached,
 	})
+}
+
+// alwaysLoad marks a tool to load with the session instead of behind tool
+// search. Claude Code defers MCP tools by default, so an agent handed a
+// memory handle had to search for mnemos_get before it could open it, and
+// in the first week of the index arm it opened 4 memories in 22
+// conversations. Only the two read tools carry it, to keep the upfront
+// tool list small.
+func alwaysLoad() mcpsdk.Meta {
+	return mcpsdk.Meta{"anthropic/alwaysLoad": true}
+}
+
+// parseCues validates and canonicalises cues. It runs before the save, so
+// a malformed cue fails the call without leaving a half-written memory.
+func parseCues(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	for _, r := range raw {
+		c, err := cue.Parse(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c.String())
+	}
+	return out, nil
+}
+
+// attachCues stores already-parsed cues on a saved memory.
+func (s *Server) attachCues(ctx context.Context, observationID string, cues []string) ([]string, error) {
+	if len(cues) == 0 || s.cfg.Cues == nil {
+		return nil, nil
+	}
+	if err := s.cfg.Cues.Add(ctx, observationID, cues, time.Now().UTC()); err != nil {
+		return nil, fmt.Errorf("attach cues: %w", err)
+	}
+	return cues, nil
 }
 
 // ---- mnemos_search -----------------------------------------------------
@@ -654,9 +702,14 @@ type correctArgs struct {
 	Project        string   `json:"project,omitempty" jsonschema:"defaults to the project the server runs in; pass \"*\" for a memory that applies to every project"`
 	SessionID      string   `json:"session_id,omitempty"`
 	Importance     int      `json:"importance,omitempty" jsonschema:"defaults to 8 — corrections matter"`
+	Cues           []string `json:"cues,omitempty" jsonschema:"actions that make this memory apply, so it is shown right before them: cmd:<words> for a shell command (its words in order, the first being the program, e.g. cmd:git commit) or path:<glob> for a file about to be edited (e.g. path:**/migrations/*.sql). Add one whenever the rule is about a specific command or kind of file"`
 }
 
 func (s *Server) handleCorrect(ctx context.Context, _ *mcpsdk.CallToolRequest, a correctArgs) (*mcpsdk.CallToolResult, any, error) {
+	cues, err := parseCues(a.Cues)
+	if err != nil {
+		return nil, nil, err
+	}
 	importance := a.Importance
 	if importance == 0 {
 		importance = 8
@@ -676,7 +729,11 @@ func (s *Server) handleCorrect(ctx context.Context, _ *mcpsdk.CallToolRequest, a
 	if err != nil {
 		return nil, nil, err
 	}
-	return jsonResult(map[string]any{"id": res.Observation.ID, "deduped": res.Deduped})
+	attached, err := s.attachCues(ctx, res.Observation.ID, cues)
+	if err != nil {
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{"id": res.Observation.ID, "deduped": res.Deduped, "cues": attached})
 }
 
 // ---- mnemos_convention -------------------------------------------------
@@ -689,9 +746,14 @@ type conventionArgs struct {
 	Project   string   `json:"project,omitempty" jsonschema:"defaults to the project the server runs in; pass \"*\" for a memory that applies to every project"`
 	Tags      []string `json:"tags,omitempty"`
 	AgentID   string   `json:"agent_id,omitempty"`
+	Cues      []string `json:"cues,omitempty" jsonschema:"actions that make this memory apply, so it is shown right before them: cmd:<words> for a shell command (its words in order, the first being the program, e.g. cmd:git commit) or path:<glob> for a file about to be edited (e.g. path:**/migrations/*.sql). Add one whenever the rule is about a specific command or kind of file"`
 }
 
 func (s *Server) handleConvention(ctx context.Context, _ *mcpsdk.CallToolRequest, a conventionArgs) (*mcpsdk.CallToolResult, any, error) {
+	cues, err := parseCues(a.Cues)
+	if err != nil {
+		return nil, nil, err
+	}
 	content := a.Rule
 	if a.Example != "" {
 		content += "\n\nExample:\n" + a.Example
@@ -704,7 +766,11 @@ func (s *Server) handleConvention(ctx context.Context, _ *mcpsdk.CallToolRequest
 	if err != nil {
 		return nil, nil, err
 	}
-	return jsonResult(map[string]any{"id": res.Observation.ID, "deduped": res.Deduped})
+	attached, err := s.attachCues(ctx, res.Observation.ID, cues)
+	if err != nil {
+		return nil, nil, err
+	}
+	return jsonResult(map[string]any{"id": res.Observation.ID, "deduped": res.Deduped, "cues": attached})
 }
 
 // ---- mnemos_touch ------------------------------------------------------

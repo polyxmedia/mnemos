@@ -14,10 +14,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/polyxmedia/mnemos/internal/cue"
 	"github.com/polyxmedia/mnemos/internal/injection"
 	"github.com/polyxmedia/mnemos/internal/memory"
 	"github.com/polyxmedia/mnemos/internal/safety"
 	"github.com/polyxmedia/mnemos/internal/session"
+	"github.com/polyxmedia/mnemos/internal/storage"
 )
 
 // projectFromHook derives the project name from the hook payload's cwd,
@@ -114,18 +116,57 @@ func runHookUserPrompt(ctx context.Context, _ []string) error {
 	}
 
 	var sessID, agentID string
+	var arm session.RetrievalArm
 	if sess != nil {
-		sessID, agentID = sess.ID, sess.AgentID
+		sessID, agentID, arm = sess.ID, sess.AgentID, sess.RetrievalArm
 	}
 	// A session on the index arm pulls from the titles it was given at the
-	// start, so searching on its behalf here would blur the comparison. The
-	// capture directive stays on both arms: it writes memory, it does not
-	// surface any.
-	if sess == nil || sess.RetrievalArm != session.ArmIndex {
-		emitPromptMemoryBlock(ctx, os.Stdout, d, in.Prompt, agentID, project, sessID)
+	// start, so showing it search hits would blur the comparison. The search
+	// still runs and is logged, so a later check can judge what push would
+	// have shown on both arms. The capture directive stays on both arms: it
+	// writes memory, it does not surface any.
+	show := arm != session.ArmIndex
+	var out io.Writer = io.Discard
+	if show {
+		out = os.Stdout
 	}
+	res := emitPromptMemoryBlock(ctx, out, d, in.Prompt, agentID, project, sessID, show)
+	recordRetrievalEvent(ctx, d, in.CWD, storage.RetrievalEvent{
+		Channel: storage.EventPromptHook, HostSessionID: in.SessionID, SessionID: sessID,
+		Project: project, Arm: string(arm), Query: in.Prompt,
+		Fired: show && len(res.injected) > 0, TopScore: res.topScore, Gap: res.gap,
+		Candidates: res.candidates, Injected: shownIDs(show, res.injected), Chars: shownChars(show, res.chars),
+	})
 	emitCaptureDirective(os.Stdout, in.Prompt)
 	return nil
+}
+
+// shownIDs returns ids when they reached the context, else nil.
+func shownIDs(shown bool, ids []string) []string {
+	if !shown {
+		return nil
+	}
+	return ids
+}
+
+// shownChars returns n when the text reached the context, else 0.
+func shownChars(shown bool, n int) int {
+	if !shown {
+		return 0
+	}
+	return n
+}
+
+// recordRetrievalEvent stamps and writes one delivery decision. Measurement
+// must never break delivery, so failures are dropped. Scripted runs in
+// Claude Code's temp area are left out, as they are from the experiment, so
+// a labelling sample never spends its budget on one-line test prompts.
+func recordRetrievalEvent(ctx context.Context, d *deps, cwd string, e storage.RetrievalEvent) {
+	if d == nil || d.db == nil || isClaudeTempWorkDir(cwd) {
+		return
+	}
+	e.CreatedAt = time.Now().UTC()
+	_ = d.db.RetrievalEvents().Record(ctx, e)
 }
 
 // isSyntheticPrompt reports whether a UserPromptSubmit prompt is a turn the
@@ -318,14 +359,29 @@ const promptMemoryHeader = "[mnemos: possibly relevant memory from earlier sessi
 // catch the "convention + correction + decision" cluster around a topic.
 const promptMemoryMaxHits = 3
 
+// promptResult is what one prompt-hook search saw and kept, for the
+// retrieval event log.
+type promptResult struct {
+	candidates []storage.ScoredRef
+	topScore   float64
+	// gap is the top score minus the last candidate's, the score-gap signal
+	// the 2026-11-06 gold set tested (it did not separate relevant hits on
+	// this BM25 setup, so it is logged for live re-checks, not used).
+	gap      float64
+	injected []string
+	chars    int
+}
+
 // emitPromptMemoryBlock searches mnemos for the user's prompt and writes a
 // compact context block to w when at least one hit clears the score floor.
 // Best-effort: every error path produces zero stdout so a hook bug never
-// poisons the agent's context. Kept hits are recorded in the injection log
-// (channel prompt_hook) so surfaced-vs-used ratios cover this path too.
-func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, agentID, project, sessionID string) {
+// poisons the agent's context. When record is true, kept hits are logged as
+// surfaced (channel prompt_hook) so surfaced-vs-used ratios cover this path;
+// a shadow search on the index arm passes false and only reports.
+func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, agentID, project, sessionID string, record bool) promptResult {
+	var res promptResult
 	if d == nil || !hasSearchableContent(prompt) {
-		return
+		return res
 	}
 	// PreferProject, not Project: a hard filter would drop project-less
 	// global conventions. Soft affinity downranks other projects' memories
@@ -336,8 +392,13 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, ag
 		Limit:         promptMemoryMaxHits,
 	})
 	if err != nil || len(hits) == 0 {
-		return
+		return res
 	}
+	for _, h := range hits {
+		res.candidates = append(res.candidates, storage.ScoredRef{ID: h.Observation.ID, Score: h.Score})
+	}
+	res.topScore = hits[0].Score
+	res.gap = hits[0].Score - hits[len(hits)-1].Score
 	// Suppress memories already surfaced into this project's context in the
 	// last window. Without this the same three memories ride along on every
 	// single prompt for as long as the topic holds — 6879 prompt_hook
@@ -356,9 +417,10 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, ag
 		kept = append(kept, h)
 	}
 	if len(kept) == 0 {
-		return
+		return res
 	}
-	fmt.Fprintln(w, promptMemoryHeader)
+	var b strings.Builder
+	fmt.Fprintln(&b, promptMemoryHeader)
 	refs := make([]injection.Ref, 0, len(kept))
 	for _, h := range kept {
 		title := h.Observation.Title
@@ -372,12 +434,18 @@ func emitPromptMemoryBlock(ctx context.Context, w io.Writer, d *deps, prompt, ag
 		if len(snippet) > 240 {
 			snippet = snippet[:237] + "…"
 		}
-		fmt.Fprintf(w, "- [%s] %s — %s\n", h.Observation.Type, title, snippet)
+		fmt.Fprintf(&b, "- [%s] %s — %s\n", h.Observation.Type, title, snippet)
 		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: h.Observation.ID})
 	}
-	_ = injection.NewLogger(injStore, nil).
-		Log(ctx, injection.ChannelPromptHook, agentID, project, sessionID, refs)
-	_ = d.mem.RecordSurfaced(ctx, refIDs(refs))
+	_, _ = io.WriteString(w, b.String())
+	res.injected = refIDs(refs)
+	res.chars = b.Len()
+	if record {
+		_ = injection.NewLogger(injStore, nil).
+			Log(ctx, injection.ChannelPromptHook, agentID, project, sessionID, refs)
+		_ = d.mem.RecordSurfaced(ctx, res.injected)
+	}
+	return res
 }
 
 // refIDs projects injection refs down to their bare IDs for RecordSurfaced.
@@ -610,10 +678,141 @@ func runHookPreTool(ctx context.Context, _ []string) error {
 		fmt.Fprintln(os.Stderr, msg)
 		os.Exit(2)
 	}
-	if isFileEditTool(in.ToolName) {
+	switch {
+	case isFileEditTool(in.ToolName):
 		emitPreToolMemory(ctx, os.Stdout, in)
+	case in.ToolName == "Bash":
+		emitCommandCues(ctx, os.Stdout, in)
 	}
 	return nil
+}
+
+// cueRepeatWindow is how long a memory that fired on a cue stays quiet on
+// later matches of its cues. Ten commits in a working stretch get the rule
+// once, and the next stretch, usually past a compaction, gets it again.
+const cueRepeatWindow = 30 * time.Minute
+
+// maxCueSnippet bounds how much of a fired memory goes into the context.
+const maxCueSnippet = 300
+
+// firedCue is one memory a cue fired, and the cue that did it.
+type firedCue struct {
+	obs memory.Observation
+	cue string
+}
+
+// matchCues returns the live memories whose cues match, scoped to this
+// project or global, minus those that fired on a cue within
+// cueRepeatWindow. Errors yield nothing: a missed rule is better than a
+// broken tool call.
+func matchCues(ctx context.Context, d *deps, project string, match func(cue.Cue) bool) []firedCue {
+	now := time.Now().UTC()
+	cued, err := d.db.Cues().Live(ctx, now)
+	if err != nil || len(cued) == 0 {
+		return nil
+	}
+	recent := map[string]bool{}
+	if ids, err := d.db.Injections().RecentRefIDs(ctx, injection.KindObservation, project,
+		now.Add(-cueRepeatWindow), []injection.Channel{injection.ChannelCue}); err == nil {
+		for _, id := range ids {
+			recent[id] = true
+		}
+	}
+	var out []firedCue
+	for _, m := range cued {
+		if m.Observation.Project != "" && m.Observation.Project != project {
+			continue
+		}
+		if recent[m.Observation.ID] {
+			continue
+		}
+		for _, raw := range m.Cues {
+			c, err := cue.Parse(raw)
+			if err == nil && match(c) {
+				out = append(out, firedCue{obs: m.Observation, cue: c.String()})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// writeCueLines renders fired memories as context lines.
+func writeCueLines(b *strings.Builder, fired []firedCue) {
+	for _, f := range fired {
+		body := strings.Join(strings.Fields(f.obs.Content), " ")
+		if len(body) > maxCueSnippet {
+			cut := maxCueSnippet - 3
+			for cut > 0 && !utf8.RuneStart(body[cut]) {
+				cut-- // never split a multi-byte character
+			}
+			body = body[:cut] + "..."
+		}
+		fmt.Fprintf(b, "- [%s] %s: %s (cue %s)\n", f.obs.Type, f.obs.Title, body, f.cue)
+	}
+}
+
+// emitCommandCues fires memories whose cmd: cues match the command a Bash
+// call is about to run, as PreToolUse additionalContext. Like every
+// pre-tool surface it informs and never decides: no permissionDecision is
+// emitted, so the call goes ahead whether or not a rule fired.
+func emitCommandCues(ctx context.Context, w io.Writer, in hookInput) {
+	command, _ := in.ToolInput["command"].(string)
+	if strings.TrimSpace(command) == "" {
+		return
+	}
+	d, err := loadDeps(ctx)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mnemos hook pre-tool:", err)
+		return
+	}
+	defer d.close()
+
+	proj := projectFromHook(in)
+	fired := matchCues(ctx, d, proj, func(c cue.Cue) bool { return c.MatchCommand(command) })
+	if len(fired) == 0 {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("[mnemos: saved rule for the command about to run. Follow it, or say why it does not apply.]\n")
+	writeCueLines(&b, fired)
+	text := strings.TrimRight(b.String(), "\n")
+	if !writePreToolContext(w, text) {
+		return
+	}
+	logCueFires(ctx, d, in, proj, command, fired, len(text))
+}
+
+// writePreToolContext emits text as PreToolUse additionalContext.
+func writePreToolContext(w io.Writer, text string) bool {
+	out := map[string]any{
+		"hookSpecificOutput": map[string]any{
+			"hookEventName":     "PreToolUse",
+			"additionalContext": text,
+		},
+	}
+	return json.NewEncoder(w).Encode(out) == nil
+}
+
+// logCueFires records fired cues in the injection log and the event log.
+func logCueFires(ctx context.Context, d *deps, in hookInput, proj, query string, fired []firedCue, chars int) {
+	var sessID, agentID string
+	var arm session.RetrievalArm
+	if sess, err := d.sess.Resolve(ctx, in.SessionID, proj); err == nil && sess != nil {
+		sessID, agentID, arm = sess.ID, sess.AgentID, sess.RetrievalArm
+	}
+	refs := make([]injection.Ref, 0, len(fired))
+	ids := make([]string, 0, len(fired))
+	for _, f := range fired {
+		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: f.obs.ID})
+		ids = append(ids, f.obs.ID)
+	}
+	_ = injection.NewLogger(d.db.Injections(), nil).Log(ctx, injection.ChannelCue, agentID, proj, sessID, refs)
+	_ = d.mem.RecordSurfaced(ctx, ids)
+	recordRetrievalEvent(ctx, d, in.CWD, storage.RetrievalEvent{
+		Channel: storage.EventCue, HostSessionID: in.SessionID, SessionID: sessID, Project: proj,
+		Arm: string(arm), Query: query, Fired: true, Injected: ids, Chars: chars,
+	})
 }
 
 // preToolMemoryMaxHits caps how many memories ride along on one edit.
@@ -640,10 +839,8 @@ func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 		root, _ = os.Getwd()
 	}
 	home, _ := os.UserHomeDir()
-	query := pathQueryTokens(path, repoRoot(root, home))
-	if query == "" {
-		return
-	}
+	repo := repoRoot(root, home)
+	query := pathQueryTokens(path, repo)
 
 	d, err := loadDeps(ctx)
 	if err != nil {
@@ -653,70 +850,111 @@ func emitPreToolMemory(ctx context.Context, w io.Writer, in hookInput) {
 	defer d.close()
 
 	proj := projectFromHook(in)
-	hits, err := d.mem.Search(ctx, memory.SearchInput{
-		Query:   query,
-		Project: proj,
-		Limit:   preToolMemoryMaxHits * 2,
-	})
-	if err != nil || len(hits) == 0 {
-		return
+	rel := relativeToRepo(path, repo)
+	fired := matchCues(ctx, d, proj, func(c cue.Cue) bool { return c.MatchPath(rel) })
+	firedIDs := map[string]bool{}
+	for _, f := range fired {
+		firedIDs[f.obs.ID] = true
 	}
 
 	var sessID, agentID string
+	var arm session.RetrievalArm
 	if sess, err := d.sess.Resolve(ctx, in.SessionID, proj); err == nil && sess != nil {
-		sessID, agentID = sess.ID, sess.AgentID
+		sessID, agentID, arm = sess.ID, sess.AgentID, sess.RetrievalArm
 	}
 
-	injStore := d.db.Injections()
-	suppressed := injection.Suppressed(ctx, injStore, injection.KindObservation, proj, time.Now())
-
-	var kept []memory.SearchResult
-	for _, h := range hits {
-		if h.Observation.Type != memory.TypeCorrection && h.Observation.Type != memory.TypeConvention {
-			continue
+	var (
+		kept       []memory.SearchResult
+		candidates []storage.ScoredRef
+		topScore   float64
+		searched   bool
+	)
+	if query != "" {
+		hits, err := d.mem.Search(ctx, memory.SearchInput{
+			Query:   query,
+			Project: proj,
+			Limit:   preToolMemoryMaxHits * 2,
+		})
+		if err == nil && len(hits) > 0 {
+			searched = true
+			topScore = hits[0].Score
+			injStore := d.db.Injections()
+			suppressed := injection.Suppressed(ctx, injStore, injection.KindObservation, proj, time.Now())
+			for _, h := range hits {
+				candidates = append(candidates, storage.ScoredRef{ID: h.Observation.ID, Score: h.Score})
+				if h.Observation.Type != memory.TypeCorrection && h.Observation.Type != memory.TypeConvention {
+					continue
+				}
+				if h.Score < promptMemoryMinScore || firedIDs[h.Observation.ID] {
+					continue
+				}
+				if _, dup := suppressed[h.Observation.ID]; dup {
+					continue
+				}
+				if len(kept) < preToolMemoryMaxHits {
+					kept = append(kept, h)
+				}
+			}
 		}
-		if h.Score < promptMemoryMinScore {
-			continue
-		}
-		if _, dup := suppressed[h.Observation.ID]; dup {
-			continue
-		}
-		kept = append(kept, h)
-		if len(kept) >= preToolMemoryMaxHits {
-			break
-		}
-	}
-	if len(kept) == 0 {
-		return
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "[mnemos: memory relevant to %s — apply before editing]\n", filepath.Base(path))
-	refs := make([]injection.Ref, 0, len(kept))
-	for _, h := range kept {
-		snippet := strings.TrimSpace(h.Snippet)
-		if snippet == "" {
-			snippet = strings.TrimSpace(h.Observation.Content)
-		}
-		if len(snippet) > 240 {
-			snippet = snippet[:237] + "…"
-		}
-		fmt.Fprintf(&b, "- [%s] %s — %s\n", h.Observation.Type, h.Observation.Title, snippet)
-		refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: h.Observation.ID})
+	if len(fired) > 0 {
+		fmt.Fprintf(&b, "[mnemos: saved rule for editing %s. Follow it, or say why it does not apply.]\n", filepath.Base(path))
+		writeCueLines(&b, fired)
 	}
+	searchStart := b.Len()
+	if len(kept) > 0 {
+		fmt.Fprintf(&b, "[mnemos: memory relevant to %s — apply before editing]\n", filepath.Base(path))
+		for _, h := range kept {
+			snippet := strings.TrimSpace(h.Snippet)
+			if snippet == "" {
+				snippet = strings.TrimSpace(h.Observation.Content)
+			}
+			if len(snippet) > 240 {
+				snippet = snippet[:237] + "…"
+			}
+			fmt.Fprintf(&b, "- [%s] %s — %s\n", h.Observation.Type, h.Observation.Title, snippet)
+		}
+	}
+	text := strings.TrimRight(b.String(), "\n")
+	wrote := text != "" && writePreToolContext(w, text)
 
-	out := map[string]any{
-		"hookSpecificOutput": map[string]any{
-			"hookEventName":     "PreToolUse",
-			"additionalContext": strings.TrimRight(b.String(), "\n"),
-		},
+	if wrote && len(fired) > 0 {
+		logCueFires(ctx, d, in, proj, rel, fired, searchStart)
 	}
-	if err := json.NewEncoder(w).Encode(out); err != nil {
-		return
+	if searched {
+		var ids []string
+		if wrote {
+			refs := make([]injection.Ref, 0, len(kept))
+			for _, h := range kept {
+				refs = append(refs, injection.Ref{Kind: injection.KindObservation, ID: h.Observation.ID})
+				ids = append(ids, h.Observation.ID)
+			}
+			if len(refs) > 0 {
+				_ = injection.NewLogger(d.db.Injections(), nil).
+					Log(ctx, injection.ChannelPreTool, agentID, proj, sessID, refs)
+				_ = d.mem.RecordSurfaced(ctx, ids)
+			}
+		}
+		recordRetrievalEvent(ctx, d, in.CWD, storage.RetrievalEvent{
+			Channel: storage.EventPreTool, HostSessionID: in.SessionID, SessionID: sessID, Project: proj,
+			Arm: string(arm), Query: rel, Fired: len(ids) > 0, TopScore: topScore,
+			Candidates: candidates, Injected: ids, Chars: shownChars(len(ids) > 0, b.Len()-searchStart),
+		})
 	}
-	_ = injection.NewLogger(injStore, nil).
-		Log(ctx, injection.ChannelPreTool, agentID, proj, sessID, refs)
-	_ = d.mem.RecordSurfaced(ctx, refIDs(refs))
+}
+
+// relativeToRepo returns path relative to repo when it lies inside it, else
+// the path unchanged, in slash form for cue matching.
+func relativeToRepo(path, repo string) string {
+	if repo != "" && filepath.IsAbs(path) {
+		if rel, err := filepath.Rel(repo, path); err == nil && rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(path)
 }
 
 // isAgentNoteFile reports whether path is one of the agent's own working

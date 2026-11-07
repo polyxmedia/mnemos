@@ -430,10 +430,12 @@ func claudeHooks(selfPath string) []labeledHook {
 			},
 		},
 		{
+			// Bash is here for cmd: cues, which fire a saved rule right
+			// before the command it is about.
 			label: "Claude Code PreToolUse just-in-time memory",
 			entry: installer.HookEntry{
 				Event:   "PreToolUse",
-				Matcher: "Edit|Write|MultiEdit|NotebookEdit",
+				Matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash",
 				Command: fmt.Sprintf("%s hook pre-tool", selfPath),
 				Timeout: 5,
 			},
@@ -446,7 +448,8 @@ func claudeHooks(selfPath string) []labeledHook {
 // to stderr, which never appeared in a single transcript, while every run
 // logged its memories as surfaced. The startup-only SessionStart entry is
 // superseded by the startup|resume|clear one; leaving both would fire
-// prewarm twice on every launch.
+// prewarm twice on every launch. The edit-only just-in-time entry is
+// superseded by the one that also matches Bash, for cmd: cues.
 func obsoleteClaudeHooks(selfPath string) []labeledHook {
 	return []labeledHook{
 		{
@@ -466,6 +469,13 @@ func obsoleteClaudeHooks(selfPath string) []labeledHook {
 			label: "PostCompact hook",
 			entry: installer.HookEntry{
 				Event: "PostCompact", Command: fmt.Sprintf("%s hook post-compact", selfPath),
+			},
+		},
+		{
+			label: "edit-only PreToolUse just-in-time memory hook",
+			entry: installer.HookEntry{
+				Event: "PreToolUse", Matcher: "Edit|Write|MultiEdit|NotebookEdit",
+				Command: fmt.Sprintf("%s hook pre-tool", selfPath),
 			},
 		},
 	}

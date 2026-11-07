@@ -749,6 +749,17 @@ func scanObsWithScore(row scanner) (*memory.Observation, float64, string, error)
 	return o, score, snippet, nil
 }
 
+func scanObsWithCue(row scanner) (*memory.Observation, string, error) {
+	o := &memory.Observation{}
+	d := newObsScanDest(o)
+	var cue string
+	if err := row.Scan(append(d.args(), &cue)...); err != nil {
+		return nil, "", fmt.Errorf("scan: %w", err)
+	}
+	d.finalise()
+	return o, cue, nil
+}
+
 func scanObsList(rows *sql.Rows) ([]memory.Observation, error) {
 	var out []memory.Observation
 	for rows.Next() {

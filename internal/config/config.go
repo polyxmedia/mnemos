@@ -33,6 +33,12 @@ type RetrievalConfig struct {
 	// experiment` compares them). An unknown value behaves as push, because
 	// a config typo must not silently switch every hook off.
 	Mode string `toml:"mode"`
+	// ExperimentStart is the date (2006-01-02, or an RFC 3339 time) from
+	// which `mnemos experiment` counts conversations. Set it whenever what is
+	// being compared changes, so the report reads one version and never
+	// mixes in data from before a fix. It is read only by that command: a
+	// bad value fails the report and leaves the hooks alone.
+	ExperimentStart string `toml:"experiment_start,omitempty"`
 }
 
 // NativeConfig controls the read-only index of Claude Code's auto memory
